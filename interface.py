@@ -29,12 +29,12 @@ class AudioTranscriber(Transcriber):
         return str(segment["id"]).rjust(4) + "  " + \
                 hms(segment["start"]) + "   "
 
-    def stdout(self, sec=1):
-        stream = LiveCapture()
+    def stdout(self, sec=1, exact=False, **kw):
+        stream = LiveCapture(**kw)
         async def inner(): # TODO: make stdout closer to final transcription
             pending = 0
             print("Starting transcription...")
-            async for out in self.loop(stream, sec):
+            async for out in self.loop(stream, sec, exact=exact):
                 for line in out["segments"][pending:-1]:
                     print_inline(self.gutter(line) + line["text"], "\n")
                 if len(out["segments"]) == 0:
@@ -45,4 +45,4 @@ class AudioTranscriber(Transcriber):
         asyncio.run(inner())
 
 if __name__ == "__main__":
-    AudioTranscriber(load_model("base.en")).stdout()
+    AudioTranscriber(load_model("large")).stdout(5, n_mels=128)

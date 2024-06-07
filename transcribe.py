@@ -118,7 +118,8 @@ class Transcriber(metaclass=Getter.defaults):
             warnings.warn("FP16 is not supported on CPU; using FP32 instead")
             self.dtype = torch.float32
 
-    _language = None
+    _language = "en"
+    # _language = None
     @property
     def language(self):
         if self._language is not None:

@@ -78,7 +78,7 @@ class ArrayStream(AudioSink):
         super().__init__(**kw)
         self.q = asyncio.Queue(capacity)
         self.finished = asyncio.Event()
-        self.device, self.batch = device, batch
+        self.device, self.batch, self.n_mels = device, batch, n_mels
         self.kw = {"dtype": torch.float32, "device": self.device}
         self.sees = torch.zeros((0,), **self.kw)
         self.spectogram = torch.zeros((n_mels, 0), **self.kw)
@@ -176,7 +176,7 @@ class ArrayStream(AudioSink):
         if spectogram.shape[-1] >= N_FFT:
             spectogram = self.transform(self.dft(spectogram))
         padding = self.padding(self.spectogram.shape[-1] + spectogram.shape[-1])
-        pad = torch.zeros(80, max(0, padding), **self.kw)
+        pad = torch.zeros(self.n_mels, max(0, padding), **self.kw)
         spectogram = torch.cat((self.spectogram, spectogram, pad), -1)
         return spectogram if padding >= 0 else spectogram[-padding:]
 
