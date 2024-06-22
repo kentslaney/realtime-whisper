@@ -1,7 +1,10 @@
+import torch
+
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
 from audio import *
+from transcribe import Transcriber
 
 end_locals()
 
@@ -49,4 +52,40 @@ class Test(AudioFileStitch):
 
     def __call__(self):
         asyncio.run(self.test())
+
+class MockTokenizer:
+    def __init__(self, language, **kw):
+        self.language = language
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+    def encode(prompt):
+        return [self.language, self, prompt]
+
+class TranscriberTest(Transcriber):
+    dtype = torch.float32
+    model = type("MockModel", (), {
+            "is_multilingual": True,
+            "num_languages": None,
+            "device": torch.device("cpu")
+        })()
+    latest = None
+    _seek = 0
+
+    def __init__(self, seq):
+        super().__init__(self.model)
+        self.seq = seq
+        self.result = []
+        self.result.append(self.initial_prompt_tokens)
+        self.latest = []
+        for i in range(len(self.seq)):
+            self._seek = i
+            self.result.append(self.initial_prompt_tokens)
+
+    def detect_language(self):
+        self.result.append("sample")
+        return self.seq[self._seek]
+
+    def get_tokenizer(self, language, **kw):
+        return MockTokenizer(language, **kw)
 

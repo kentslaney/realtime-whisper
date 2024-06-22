@@ -12,8 +12,10 @@ def print_inline(value, end=""):
     sys.stdout.flush()
 
 def hms(sec):
-    h = "" if sec < 3600 else str(int(sec) // 3600) + ":"
-    m = "   " if sec < 60 else str(int(sec) // 60 % 60).rjust(2) + ":"
+    trim = sec < 3600
+    h = "" if trim else str(int(sec) // 3600) + ":"
+    m_fill = " " if trim else "0"
+    m = "   " if sec < 60 else str(int(sec) // 60 % 60).rjust(2, m_fill) + ":"
     s = str(int(sec) % 60).rjust(2, '0') + "."
     c = str(round((sec % 1) * 100)).rjust(2, '0')
     return h + m + s + c
@@ -43,6 +45,19 @@ class AudioTranscriber(Transcriber):
                 print_inline(self.gutter(current) + current["text"])
                 pending = len(out["segments"]) - 1
         asyncio.run(inner())
+
+def tod(seconds):
+    return time.strftime("%H:%M:%S", time.localtime(seconds))
+
+class TODTranscriber(AudioTranscriber):
+    def __init__(self):
+        global time
+        import time
+        self.initial = time.time()
+
+    def gutter(self, segment):
+        return str(segment["id"]).rjust(4) + "  " + \
+                tod(self.initial + segment["start"]) + "   "
 
 if __name__ == "__main__":
     AudioTranscriber(load_model("large")).stdout(5, n_mels=128)

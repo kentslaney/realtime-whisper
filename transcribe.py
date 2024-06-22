@@ -1,3 +1,4 @@
+from collections import namedtuple
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 import numpy as np
 import torch
@@ -8,7 +9,6 @@ from whisper.audio import (
     N_FRAMES,
     SAMPLE_RATE,
     CHUNK_LENGTH,
-    log_mel_spectrogram,
     pad_or_trim,
 )
 from whisper.decoding import DecodingOptions, DecodingResult
@@ -18,11 +18,7 @@ from whisper.utils import (
     exact_div,
     format_timestamp,
     get_end,
-    get_writer,
     make_safe,
-    optional_float,
-    optional_int,
-    str2bool,
 )
 
 if TYPE_CHECKING:
@@ -60,6 +56,8 @@ class Getter:
             getter, setter = closure(k, private)
             updates[k] = getter.setter(v.f or setter)
         return type(clsname, bases, {**attrs, **updates})
+
+Hypothesis = namedtuple("Hypothesis", ("language", "since", "evidence", "last"))
 
 class Transcriber(metaclass=Getter.defaults):
     prefix = '''"'\u201c\u00bf([{-'''
@@ -118,8 +116,15 @@ class Transcriber(metaclass=Getter.defaults):
             warnings.warn("FP16 is not supported on CPU; using FP32 instead")
             self.dtype = torch.float32
 
+    def detect_language(self):
+        mel_segment = pad_or_trim(self.latest, N_FRAMES)
+        mel_segment = mel_segment.to(self.device).to(self.dtype)
+        _, probs = self.model.detect_language(mel_segment)
+        return max(probs, key=probs.get)
+
     _language = "en"
     # _language = None
+    _hypothesis = Hypothesis(None, 0, 0, -1)
     @property
     def language(self):
         if self._language is not None:
@@ -130,7 +135,23 @@ class Transcriber(metaclass=Getter.defaults):
             print(
                     "Detecting language using up to the first 30 seconds."
                     "Use `--language` to specify the language")
-        raise NotImplementedError # TODO
+        if self._seek is None or self.latest is None:
+            return None
+        if self._seek == self._hypothesis.last:
+            return self._hypothesis.language
+        if self._seek > N_FRAMES:
+            self._language = self.detect_language()
+            return self._language
+        self._hypothesis.last = self._seek
+        self._hypothesis.since += 1
+        if 2 ** self._hypothesis.evidence < self._hypothesis.since:
+            return self._hypothesis.language
+        self._hypothesis.since = 0
+        guess = self.detect_language()
+        if guess == self._hypothesis.language:
+            self._hypothesis.evidence += 1
+        self._hypothesis.language = guess
+        self._hypothesis.evidence = 1
 
     @language.setter
     def language(self, value):
@@ -194,28 +215,54 @@ class Transcriber(metaclass=Getter.defaults):
         self._word_timestamps = value
         self.task = self.task
 
-    # TODO: gonna have to be updated if detected language changes
+    get_tokenizer = get_tokenizer
     _tokenizer = None
+    _tokenizer_cache = {}
     @property
     def tokenizer(self):
         if self._tokenizer is None:
-            self._tokenizer = get_tokenizer(
-                self.model.is_multilingual,
-                num_languages=self.model.num_languages,
-                language=self.language,
-                task=self.task,
-            )
+            lang = self.language
+            if self._language is not None:
+                if self._language in self._tokenizer_cache:
+                    self._tokenizer = self._tokenizer_cache[self._language]
+                else:
+                    self._tokenizer = self.get_tokenizer(
+                        self.model.is_multilingual,
+                        num_languages=self.model.num_languages,
+                        language=self.language,
+                        task=self.task,
+                    )
+                return self._tokenizer
+            if lang is None:
+                return None
+            if lang not in self._tokenizer_cache:
+                self._tokenizer_cache[lang] = self.get_tokenizer(
+                    self.model.is_multilingual,
+                    num_languages=self.model.num_languages,
+                    language=lang,
+                    task=self.task,
+                )
+            return self._tokenizer_cache[lang]
         return self._tokenizer
 
     _initial_prompt_tokens = None
+    _initial_prompt_cache = {}
     @property
     def initial_prompt_tokens(self):
         if self._initial_prompt_tokens is None:
             if self.initial_prompt is None:
                 self._initial_prompt_tokens = []
             else:
-                self._initial_prompt_tokens = self.tokenizer.encode(
-                        " " + self.initial_prompt.strip())
+                tokenizer = self.tokenizer
+                if tokenizer is None:
+                    return []
+                if tokenizer not in self._initial_prompt_cache:
+                    self._initial_prompt_cache[tokenizer] = tokenizer.encode(
+                            " " + self.initial_prompt.strip())
+                if self._tokenizer is not None:
+                    self._initial_prompt_tokens = \
+                            self._initial_prompt_cache[tokenizer]
+                return self._initial_prompt_cache[tokenizer]
         return self._initial_prompt_tokens
 
     def __init__(
@@ -478,8 +525,9 @@ class Transcriber(metaclass=Getter.defaults):
                 if last_word_end is not None:
                     self.last_speech_timestamp = last_word_end
 
-
+    latest = None
     def __call__(self, mel, offset=0):
+        self.latest = mel
         content_frames = mel.shape[-1] - N_FRAMES + offset
         content_duration = float(content_frames * HOP_LENGTH / SAMPLE_RATE)
         while self.clip_idx < len(self.seek_clips):
@@ -567,6 +615,7 @@ class Transcriber(metaclass=Getter.defaults):
                 # do not feed the prompt tokens if a high temperature was used
                 self.prompt_reset_since = len(self.all_tokens)
 
+        self.latest = None
         return dict(
                 segments=self.all_segments, language=self.language,
                 text=self.tokenizer.decode(
