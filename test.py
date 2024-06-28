@@ -70,7 +70,7 @@ class TranscriberTest(Transcriber):
             "device": torch.device("cpu")
         })()
     latest = None
-    _seek = 0
+    _seek = 0.
 
     def __init__(self, seq):
         super().__init__(self.model)

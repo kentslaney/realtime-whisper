@@ -20,7 +20,10 @@ def hms(sec):
     c = str(round((sec % 1) * 100)).rjust(2, '0')
     return h + m + s + c
 
-class AudioTranscriber(Transcriber):
+class EnTranscriber(Transcriber):
+    _language = "en"
+
+class AudioTranscriber(EnTranscriber):
     async def loop(self, stream, sec, **kw):
         async for data in stream.push(sec, **kw):
             yield self(data, stream.offset)
@@ -49,15 +52,17 @@ class AudioTranscriber(Transcriber):
 def tod(seconds):
     return time.strftime("%H:%M:%S", time.localtime(seconds))
 
-class TODTranscriber(AudioTranscriber):
-    def __init__(self):
+class ToDTranscriber(AudioTranscriber):
+    def __init__(self, *a, **kw):
         global time
         import time
         self.initial = time.time()
+        super().__init__(*a, **kw)
 
     def gutter(self, segment):
         return str(segment["id"]).rjust(4) + "  " + \
                 tod(self.initial + segment["start"]) + "   "
 
 if __name__ == "__main__":
-    AudioTranscriber(load_model("large")).stdout(5, n_mels=128)
+    # ToDTranscriber(load_model("large")).stdout(5, n_mels=128)
+    ToDTranscriber(load_model("medium")).stdout(5)

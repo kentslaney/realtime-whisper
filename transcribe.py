@@ -57,7 +57,10 @@ class Getter:
             updates[k] = getter.setter(v.f or setter)
         return type(clsname, bases, {**attrs, **updates})
 
-Hypothesis = namedtuple("Hypothesis", ("language", "since", "evidence", "last"))
+class Hypothesis:
+    def __init__(self, language, since, evidence, last):
+        self.language, self.since = language, since
+        self.evidence, self.last = evidence, last
 
 class Transcriber(metaclass=Getter.defaults):
     prefix = '''"'\u201c\u00bf([{-'''
@@ -122,8 +125,7 @@ class Transcriber(metaclass=Getter.defaults):
         _, probs = self.model.detect_language(mel_segment)
         return max(probs, key=probs.get)
 
-    _language = "en"
-    # _language = None
+    _language = None
     _hypothesis = Hypothesis(None, 0, 0, -1)
     @property
     def language(self):
@@ -135,14 +137,15 @@ class Transcriber(metaclass=Getter.defaults):
             print(
                     "Detecting language using up to the first 30 seconds."
                     "Use `--language` to specify the language")
-        if self._seek is None or self.latest is None:
+        if self.latest is None:
             return None
-        if self._seek == self._hypothesis.last:
+        available = self.latest.shape[-1] - N_FRAMES
+        if available == self._hypothesis.last:
             return self._hypothesis.language
-        if self._seek > N_FRAMES:
+        if available > N_FRAMES:
             self._language = self.detect_language()
             return self._language
-        self._hypothesis.last = self._seek
+        self._hypothesis.last = available
         self._hypothesis.since += 1
         if 2 ** self._hypothesis.evidence < self._hypothesis.since:
             return self._hypothesis.language
@@ -215,7 +218,7 @@ class Transcriber(metaclass=Getter.defaults):
         self._word_timestamps = value
         self.task = self.task
 
-    get_tokenizer = get_tokenizer
+    get_tokenizer = staticmethod(get_tokenizer)
     _tokenizer = None
     _tokenizer_cache = {}
     @property
@@ -615,11 +618,12 @@ class Transcriber(metaclass=Getter.defaults):
                 # do not feed the prompt tokens if a high temperature was used
                 self.prompt_reset_since = len(self.all_tokens)
 
-        self.latest = None
-        return dict(
+        res = dict(
                 segments=self.all_segments, language=self.language,
                 text=self.tokenizer.decode(
                     self.all_tokens[len(self.initial_prompt_tokens):]))
+        self.latest = None
+        return res
 
     def restore(self): # TODO: better merging solution
         if len(self.all_segments) == 0 or self.all_segments[-1]["end"] < \
