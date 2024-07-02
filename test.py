@@ -5,6 +5,7 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
 
 from audio import *
 from transcribe import Transcriber
+from interface import *
 
 end_locals()
 
@@ -88,4 +89,19 @@ class TranscriberTest(Transcriber):
 
     def get_tokenizer(self, language, **kw):
         return MockTokenizer(language, **kw)
+
+class ReadableMinimal(MinimalTranscriber, AudioTranscriber):
+    def gutter(self, segment):
+        return hms(segment["start"]) + " - " + hms(segment["end"])
+
+    def __repr__(self):
+        return "\n".join(map(self.repr, self.all_segments))
+
+def MinimalTest():
+    model = ReadableMinimal(load_model("tiny.en"))
+    asyncio.run(model.loop(AudioFileStitch()))
+    return model
+
+if __name__ == "__main__":
+    print(MinimalTest())
 
