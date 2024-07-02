@@ -24,16 +24,19 @@ from whisper.utils import (
 if TYPE_CHECKING:
     from .model import Whisper
 
-PHRASE_TIMEOUT = CHUNK_LENGTH // 2
-
-# boilerplate for @property with _{name} storage and passthrough getter
-class Getter:
+# boilerplate for property with _{name} storage and passthrough getter/setter
+class PassthroughProperty:
     def __init__(self, default):
         self.value = default
 
     f = None
     def setter(self, f):
         self.f = f
+        return self
+
+    g = None
+    def property(self, g):
+        self.g = property(g)
         return self
 
     @staticmethod
@@ -48,13 +51,13 @@ class Getter:
 
         updates = {}
         for k, v in attrs.items():
-            if not isinstance(v, Getter):
+            if not isinstance(v, PassthroughProperty):
                 continue
             private = "_" + k
             assert private not in attrs
             updates[private] = v.value
             getter, setter = closure(k, private)
-            updates[k] = getter.setter(v.f or setter)
+            updates[k] = (v.g or getter).setter(v.f or setter)
         return type(clsname, bases, {**attrs, **updates})
 
 class Hypothesis:
@@ -62,7 +65,7 @@ class Hypothesis:
         self.language, self.since = language, since
         self.evidence, self.last = evidence, last
 
-class Transcriber(metaclass=Getter.defaults):
+class Transcriber(metaclass=PassthroughProperty.defaults):
     prefix = '''"'\u201c\u00bf([{-'''
     postfix = '''"'.\u3002,\uff0c!\uff01?\uff1f:\uff1a\u201d)]}\u3001'''
     punctuation = prefix + postfix
@@ -94,7 +97,7 @@ class Transcriber(metaclass=Getter.defaults):
         self.dtype = torch.float16 if value else torch.float32
         self.fp16device()
 
-    @Getter(None).setter
+    @PassthroughProperty(None).setter
     def model(self, value):
         self._model = value
         self.device = value.device
@@ -105,7 +108,7 @@ class Transcriber(metaclass=Getter.defaults):
             self.input_stride * HOP_LENGTH / SAMPLE_RATE
         )  # time per output token: 0.02 (seconds)
 
-    @Getter(None).setter
+    @PassthroughProperty(None).setter
     def device(self, value):
         self._device = value
         if value == torch.device("cpu"):
@@ -119,15 +122,20 @@ class Transcriber(metaclass=Getter.defaults):
             warnings.warn("FP16 is not supported on CPU; using FP32 instead")
             self.dtype = torch.float32
 
-    def detect_language(self):
-        mel_segment = pad_or_trim(self.latest, N_FRAMES)
+    def detect_language(self, mel=None):
+        mel_segment = pad_or_trim(self.latest if mel is None else mel, N_FRAMES)
         mel_segment = mel_segment.to(self.device).to(self.dtype)
         _, probs = self.model.detect_language(mel_segment)
         return max(probs, key=probs.get)
 
-    _language = None
+    prev = None
+    @PassthroughProperty(None).setter
+    def latest(self, value):
+        self.prev = self._latest
+        self._latest = value
+
     _hypothesis = Hypothesis(None, 0, 0, -1)
-    @property
+    @PassthroughProperty(None).property
     def language(self):
         if self._language is not None:
             return self._language
@@ -139,13 +147,13 @@ class Transcriber(metaclass=Getter.defaults):
                     "Use `--language` to specify the language")
         if self.latest is None:
             return None
-        available = self.latest.shape[-1] - N_FRAMES
-        if available == self._hypothesis.last:
+        if self._seek == self._hypothesis.last:
             return self._hypothesis.language
-        if available > N_FRAMES:
+        if self.frame_offset > 0:
+            mel = torch.cat((self.prev[:self.offset], self.latest), -1)
             self._language = self.detect_language()
             return self._language
-        self._hypothesis.last = available
+        self._hypothesis.last = self._seek
         self._hypothesis.since += 1
         if 2 ** self._hypothesis.evidence < self._hypothesis.since:
             return self._hypothesis.language
@@ -156,11 +164,7 @@ class Transcriber(metaclass=Getter.defaults):
         self._hypothesis.language = guess
         self._hypothesis.evidence = 1
 
-    @language.setter
-    def language(self, value):
-        self._language = value
-
-    @Getter((0,)).setter
+    @PassthroughProperty((0,)).setter
     def clip_timestamps(self, value):
         self._seek_clips = None
         if isinstance(value, str):
@@ -179,16 +183,11 @@ class Transcriber(metaclass=Getter.defaults):
             self._seek_clips = list(zip(seek_points[::2], seek_points[1::2]))
         return self._seek_clips
 
-    _seek = None
-    @property
+    @PassthroughProperty(None).property
     def seek(self):
         return self.seek_clips[0][0] if self._seek is None else self._seek
 
-    @seek.setter
-    def seek(self, value):
-        self._seek = value
-
-    @Getter(0).setter
+    @PassthroughProperty(0).setter
     def clip_idx(self, value):
         self._clip_idx = value
         clips = self.seek_clips
@@ -200,12 +199,12 @@ class Transcriber(metaclass=Getter.defaults):
     window_end_time = property(lambda self: float(
             (self.seek + N_FRAMES) * HOP_LENGTH / SAMPLE_RATE))
 
-    @Getter((0.0, 0.2, 0.4, 0.6, 0.8, 1.0)).setter
+    @PassthroughProperty((0.0, 0.2, 0.4, 0.6, 0.8, 1.0)).setter
     def temperature(self, value):
         self._temperature = (value,) if isinstance(value, (int, float)) else (
                 __class__._temperature if value is None else value)
 
-    @Getter("transcribe").setter
+    @PassthroughProperty("transcribe").setter
     def task(self, value):
         self._task = value
         if self.word_timestamps and value == "translate":
@@ -213,7 +212,7 @@ class Transcriber(metaclass=Getter.defaults):
                     "Word-level timestamps on translations may not be "
                     "reliable.")
 
-    @Getter(False).setter
+    @PassthroughProperty(False).setter
     def word_timestamps(self, value):
         self._word_timestamps = value
         self.task = self.task
@@ -528,9 +527,8 @@ class Transcriber(metaclass=Getter.defaults):
                 if last_word_end is not None:
                     self.last_speech_timestamp = last_word_end
 
-    latest = None
     def __call__(self, mel, offset=0):
-        self.latest = mel
+        self.latest, self.frame_offset = mel, offset
         content_frames = mel.shape[-1] - N_FRAMES + offset
         content_duration = float(content_frames * HOP_LENGTH / SAMPLE_RATE)
         while self.clip_idx < len(self.seek_clips):
@@ -625,12 +623,20 @@ class Transcriber(metaclass=Getter.defaults):
         self.latest = None
         return res
 
-    def restore(self): # TODO: better merging solution
-        if len(self.all_segments) == 0 or self.all_segments[-1]["end"] < \
-                self.seek * HOP_LENGTH / SAMPLE_RATE - PHRASE_TIMEOUT:
-            return
-        resuming = self.all_segments.pop()
-        self.seek = round(resuming["start"] * SAMPLE_RATE / HOP_LENGTH)
-        processing = len(self.all_tokens) - len(resuming["tokens"])
-        self.all_tokens = self.all_tokens[:processing]
+    def restore(self, offset):
+        processing, seconds = 0, offset * HOP_LENGTH / SAMPLE_RATE
+        while len(self.all_segments) > 0 and (
+                self.all_segments[-1]["start"] >= seconds
+                if len(self.all_segments) == 1 else
+                self.all_segments[-2]["end"] > seconds):
+            rewriting = self.all_segments.pop()
+            processing += len(rewriting["tokens"])
+        self.all_tokens = self.all_tokens[:len(self.all_tokens) - processing]
+        if len(self.all_segments) > 0 and (
+                self.all_segments[-1]["start"] < seconds and
+                self.all_segments[-1]["end"] >= seconds):
+            self.seek = round(
+                    self.all_segments[-1]["end"] * SAMPLE_RATE / HOP_LENGTH)
+        else:
+            self.seek = offset
 
