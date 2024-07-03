@@ -79,6 +79,7 @@ class Batcher:
             init = remainder and self.size - remainder
         if self.running.shape[self.axis] > 0:
             yield self.running
+            self.running = reset
 
 class AudioSink:
     def __init__(self, *, rate=SAMPLE_RATE, **kw):
@@ -242,7 +243,7 @@ class ArrayStream(AudioSink):
             return await anext(self.push(sec, exact))
         except StopAsyncIteration:
             await self.reader
-            return b'' # TODO: should be a tensor
+            return np.zeros((self.n_mels, 0), dtype=np.float32)
 
     async def full(self, **kw):
         await self.read(**kw)

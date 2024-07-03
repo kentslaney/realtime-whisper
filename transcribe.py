@@ -1,7 +1,7 @@
 from collections import namedtuple
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 import numpy as np
-import torch
+import torch, warnings
 
 from whisper.audio import (
     FRAMES_PER_SECOND,
