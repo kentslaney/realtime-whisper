@@ -162,19 +162,29 @@ class Group:
         self.holding = self.holding[i:]
         return res
 
-class Batcher:
-    def __init__(self, iterator, size, running=None, axis=-1, exact=False):
-        assert isinstance(size, int)
-        self.iterator, self.size, self.running, self.axis, self.exact = \
-                iterator, size, running, axis, exact
-        if isinstance(running, __class__):
-            pass
+class Taken:
+    def take(self, *a, **kw):
+        raise Exception("batch queue moved")
 
-    def __aiter__(self):
-        pass
+class Batcher(PassthroughTransform):
+    def __init__(self, iterator, size, axis=-1, exact=False):
+        assert isinstance(size, int) and size > 0
+        self.size, self.exact = size, exact
+        if isinstance(iterator, __class__):
+            self.group = iterator.group
+        preview = Unwrap(iterator)
+        self.axis = len(preview.shape) + axis if axis < 0 else axis
+        transform = LookAlong(self.axis)
+        if not hasattr(self, "group"):
+            self.group = Group(preview.concat)
+        self.iterator = PassthroughMap(transform, BoxedIterator(preview))
 
-def tmp(axis, iterator):
-    preview = Unwrap(iterator)
-    iterator = PassthroughMap(LookAlong(axis), BoxedIterator(preview))
-    pass
+    def handoff(self):
+        self.group = Taken()
+        return self.iterator
+
+    def __anext__(self):
+        while self.group.shape < self.size:
+            self.group.add(anext(self.iterator))
+        return self.group.take(self.size, self.exact)
 
