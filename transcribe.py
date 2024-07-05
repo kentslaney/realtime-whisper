@@ -21,44 +21,10 @@ from whisper.utils import (
     make_safe,
 )
 
+from utils import PassthroughProperty
+
 if TYPE_CHECKING:
     from .model import Whisper
-
-# boilerplate for property with _{name} storage and passthrough getter/setter
-class PassthroughProperty:
-    def __init__(self, default):
-        self.value = default
-
-    f = None
-    def setter(self, f):
-        self.f = f
-        return self
-
-    g = None
-    def property(self, g):
-        self.g = property(g)
-        return self
-
-    @staticmethod
-    def defaults(clsname, bases, attrs):
-        def closure(f, v):
-            def prop(self):
-                return getattr(self, v)
-            def setter(self, value):
-                setattr(self, v, value)
-            prop.__name__ = setter.__name__ = f
-            return property(prop), setter
-
-        updates = {}
-        for k, v in attrs.items():
-            if not isinstance(v, PassthroughProperty):
-                continue
-            private = "_" + k
-            assert private not in attrs
-            updates[private] = v.value
-            getter, setter = closure(k, private)
-            updates[k] = (v.g or getter).setter(v.f or setter)
-        return type(clsname, bases, {**attrs, **updates})
 
 class Hypothesis:
     def __init__(self, language, since, evidence, last):

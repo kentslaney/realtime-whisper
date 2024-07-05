@@ -16,7 +16,7 @@ def ceildiv(a, b):
 
 class Batcher:
     @staticmethod
-    async def apeek(iterator):
+    async def apeek(iterator): # TODO tail recursion
         try:
             initial = await anext(iterator)
         except StopAsyncIteration:
@@ -30,21 +30,29 @@ class Batcher:
     def __init__(self, iterator, size, running=None, axis=-1, exact=False):
         assert isinstance(size, int)
         self.iterator, self.size, self.running, self.axis, self.exact = \
-                self.box(iterator), size, running, axis, exact
+                iterator, size, running, axis, exact
         if isinstance(running, __class__):
             self.running = running.running
             running.taken = True
+            self.iterator = running._iterator
 
     taken = False
     async def box(self, iterator):
+        self._iterator = iterator
         async for i in iterator:
             yield i
             if self.taken:
                 raise Exception("source can only be batched by one iterator")
 
-    async def __aiter__(self):
-        clean, init = self.running is None, 0
+    async def __aiter__(self): # TODO: update running pre yield
+        assert not self.taken
+        if self.running is None:
+            clean, init = True, 0
+        else:
+            clean = self.running.size == 0
+            init = self.size - self.running.shape[self.axis]
         self.iterator, shape, dtype = await self.apeek(self.iterator)
+        self.iterator = self.box(self.iterator)
         if dtype is None:
             return
         self.axis = len(shape) + self.axis if self.axis < 0 else self.axis
@@ -54,15 +62,19 @@ class Batcher:
         reset = empty((0,) * len(shape), dtype=dtype)
         self.running = reset if clean else self.running
         async for sample in self.iterator:
+            self.bak = sample
             if not clean and self.running.shape[self.axis] > 0:
                 if sample.shape[self.axis] < init:
                     init -= sample.shape[self.axis]
                     self.running = concat((self.running, sample), self.axis)
                     continue
                 ending = take(sample, slice(0, init))
-                yield concat((self.running, ending), self.axis)
-                self.running = reset
+                self.running, running = reset, self.running
+                yield concat((running, ending), self.axis)
             remainder = (sample.shape[self.axis] - init) % self.size
+            if remainder > 0:
+                clean = False
+                self.running = take(sample, slice(-remainder, None))
             if self.exact:
                 bounds = [
                         range(init, sample.shape[self.axis] + i, self.size)[i:]
@@ -73,9 +85,6 @@ class Batcher:
                 end = sample.shape[self.axis] - remainder
                 if init != end:
                     yield take(sample, slice(init, end))
-            if remainder > 0:
-                clean = False
-                self.running = take(sample, slice(-remainder, None))
             init = remainder and self.size - remainder
         if self.running.shape[self.axis] > 0:
             yield self.running
