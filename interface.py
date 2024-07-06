@@ -65,10 +65,9 @@ class WatchJoin(metaclass=PassthroughProperty.defaults):
 
 class MinimalTranscriber(Transcriber):
     async def loop(self, stream, **kw):
-        breakpoint()
         for i in range(20):
             data = await stream.request(18)
-            print(data, data.shape, stream.offset)
+            print('out', data, data.shape, stream.offset)
         raise Exception # TODO
         exact = True
         chlen = 25
@@ -118,4 +117,4 @@ class EnTranscriber(AudioTranscriber):
 
 if __name__ == "__main__":
     # ToDTranscriber(load_model("large")).stdout(5, n_mels=128)
-    EnTranscriber(load_model("tiny.en")).stdout(3)
+    EnTranscriber(load_model("base.en")).stdout(3)

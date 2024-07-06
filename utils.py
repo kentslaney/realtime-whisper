@@ -43,11 +43,8 @@ class Unwrap:
             iterator = iterator.handoff()
         if isinstance(iterator, __class__):
             self._initial, self.started = iterator.initial(), iterator.started
-            if iterator.started:
-                iterator = iterator.iterator
-            else:
-                self.iterator = iterator.iterator
-                return
+            self.iterator = iterator.iterator
+            return
         elif not isinstance(iterator, collections.abc.AsyncIterator):
             iterator = aiter(iterator)
         try:
@@ -188,12 +185,11 @@ class Batcher(PassthroughTransform):
     def __init__(self, iterator, size, axis=-1, exact=False):
         assert isinstance(size, int) and size > 0
         self.size, self._axis, self.exact = size, axis, exact
-        if isinstance(iterator, __class__):
+        if isinstance(iterator, __class__) and hasattr(iterator, "group"):
             self.group = iterator.group
         self.preview = Unwrap(iterator)
 
     _iterator = None
-    @property
     async def iterator(self):
         if self._iterator is None:
             self.axis = len(await self.preview.shape) + self._axis \
@@ -212,7 +208,7 @@ class Batcher(PassthroughTransform):
         return self
 
     async def __anext__(self):
-        iterator = aiter(await self.iterator)
+        iterator = aiter(await self.iterator())
         while self.group.shape < self.size:
             self.group.add(await anext(iterator))
         return self.group.take(self.size, self.exact)

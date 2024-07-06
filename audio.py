@@ -71,7 +71,9 @@ class ArrayStream(AudioSink):
 
     loading = None
     async def fft_offset(self, iterator):
-        self.loading = Batcher(self.loader(iterator), HOP_LENGTH, self.loading)
+        if self.loading is None:
+            self.loading = self.loader(iterator)
+        self.loading = Batcher(self.loading, HOP_LENGTH)
         iterator = aiter(self.loading)
         window = np.zeros((0,), dtype=np.float32)
         while window.size < ceildiv(N_FFT, 2):
@@ -152,8 +154,9 @@ class ArrayStream(AudioSink):
     staging = None
     async def _push(self, sec, exact=False):
         batching = int(sec * SAMPLE_RATE // HOP_LENGTH)
-        iterator = self.window(self.buffer())
-        self.staging = Batcher(iterator, batching, self.staging, exact=exact)
+        if self.staging is None:
+            self.staging = self.window(self.buffer())
+        self.staging = Batcher(self.staging, batching, exact=exact)
         async for frame in self.staging:
             batched = batching if exact else frame.shape[-1]
             cutoff = max(self.spectogram.shape[-1] + batched - N_FRAMES, 0)
@@ -174,6 +177,7 @@ class ArrayStream(AudioSink):
         await self.reader
 
     async def request(self, sec, exact=True, **kw):
+        return await anext(self.push(sec, exact))
         try:
             return await anext(self.push(sec, exact))
         except StopAsyncIteration:

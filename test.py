@@ -102,7 +102,7 @@ class ReadableMinimal(MinimalTranscriber, AudioTranscriber):
         return "\n".join(map(self.repr, self.all_segments))
 
 def MinimalTest():
-    model = ReadableMinimal(load_model("tiny.en"))
+    model = ReadableMinimal(load_model("base.en"))
     asyncio.run(model.loop(AudioFileStitch()))
     return model
 
