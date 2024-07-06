@@ -4,6 +4,7 @@ from transcribe import Transcriber
 from utils import PassthroughProperty
 from audio import LiveCapture, AudioFileStitch
 from whisper.audio import CHUNK_LENGTH, FRAMES_PER_SECOND
+import debug
 
 def hms(sec):
     trim = sec < 3600
@@ -65,6 +66,7 @@ class WatchJoin(metaclass=PassthroughProperty.defaults):
 
 class MinimalTranscriber(Transcriber):
     async def loop(self, stream, **kw):
+        breakpoint()
         for i in range(20):
             data = await stream.request(18)
             print('out', data, data.shape, stream.offset)

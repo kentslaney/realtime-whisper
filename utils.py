@@ -37,7 +37,20 @@ class PassthroughProperty:
             updates[k] = (v.g or getter).setter(v.f or setter)
         return type(clsname, bases, {**attrs, **updates})
 
-class Unwrap:
+class LoopbackIterator:
+    async def iter(self):
+        raise NotImplementedError
+
+    def __aiter__(self):
+        self._iter = self.iter()
+        return self
+
+    async def __anext__(self):
+        if not hasattr(self, "_iter"):
+            self.__aiter__()
+        yield await anext(self._iter)
+
+class Unwrap(LoopbackIterator):
     def __init__(self, iterator):
         while isinstance(iterator, PassthroughTransform):
             iterator = iterator.handoff()
@@ -65,9 +78,6 @@ class Unwrap:
         async for i in self.iterator:
             yield i
 
-    def __aiter__(self):
-        return self.iter()
-
     async def prop(self, key, default):
         if hasattr(self, "initial"):
             return getattr(await self.initial(), key)
@@ -87,7 +97,7 @@ class Unwrap:
         return np.concatenate if isinstance(await self.dtype, np.dtype) \
                 else torch.cat
 
-class PassthroughTransform:
+class PassthroughTransform(LoopbackIterator):
     def handoff(self):
         raise NotImplementedError
 
@@ -99,9 +109,6 @@ class BoxedIterator(PassthroughTransform):
     def handoff(self):
         self.flag = None
         return self.iterator
-
-    def __aiter__(self):
-        return self.iter()
 
     async def iter(self):
         if self.flag is None:
@@ -139,9 +146,6 @@ class PassthroughMap(PassthroughTransform):
     async def iter(self):
         async for i in self.iterator:
             yield self.apply(i)
-
-    def __aiter__(self):
-        return self.iter()
 
 class Group:
     def __init__(self, concat):
