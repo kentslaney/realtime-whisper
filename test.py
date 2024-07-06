@@ -6,6 +6,7 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
 from audio import *
 from transcribe import Transcriber
 from interface import *
+from utils import Batcher
 
 end_locals()
 
@@ -16,10 +17,13 @@ async def test_range(x, y):
 def test_resample(x, y, z):
     res = []
     async def inner():
-        async for i in resample(test_range(x, y), z):
+        async for i in Batcher(test_range(x, y), z, exact=True):
             res.append(i)
     asyncio.run(inner())
     return res
+
+# if __name__ == "__main__":
+#     print(test_resample(6, 7, 3))
 
 class LenTest(AudioFile):
     def __init__(self, **kw):

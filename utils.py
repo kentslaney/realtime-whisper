@@ -1,4 +1,5 @@
-import collections
+import collections, torch
+import numpy as np
 
 # boilerplate for property with _{name} storage and passthrough getter/setter
 class PassthroughProperty:
@@ -41,30 +42,38 @@ class Unwrap:
         while isinstance(iterator, PassthroughTransform):
             iterator = iterator.handoff()
         if isinstance(iterator, __class__):
-            self.initial = iterator.initial
+            self._initial, self.started = iterator.initial(), iterator.started
             if iterator.started:
                 iterator = iterator.iterator
             else:
                 self.iterator = iterator.iterator
-                self.started = False
                 return
         elif not isinstance(iterator, collections.abc.AsyncIterator):
             iterator = aiter(iterator)
         try:
-            self.initial = await anext(iterator)
+            self._initial = anext(iterator)
             self.iterator, self.started = iterator, False
         except StopAsyncIteration:
             self.iterator, self.started = iter(()), True
 
-    def __aiter__(self):
-        self.started = True
-        yield self.initial
+    async def initial(self):
+        while isinstance(self._initial, collections.abc.Awaitable):
+            self._initial = await self._initial
+        return self._initial
+
+    async def iter(self):
+        if not self.started:
+            self.started = True
+            yield await self.initial()
         async for i in self.iterator:
             yield i
 
-    def prop(self, key, default):
+    def __aiter__(self):
+        return self.iter()
+
+    async def prop(self, key, default):
         if hasattr(self, "initial"):
-            return getattr(self.initial, key)
+            return getattr(await self.initial(), key)
         else:
             return default
 
@@ -77,8 +86,9 @@ class Unwrap:
         return self.prop("dtype", None)
 
     @property
-    def concat(self):
-        return np.concatenate if isinstance(dtype, np.dtype) else torch.cat
+    async def concat(self):
+        return np.concatenate if isinstance(await self.dtype, np.dtype) \
+                else torch.cat
 
 class PassthroughTransform:
     def handoff(self):
@@ -94,6 +104,9 @@ class BoxedIterator(PassthroughTransform):
         return self.iterator
 
     def __aiter__(self):
+        return self.iter()
+
+    async def iter(self):
         if self.flag is None:
             raise Exception("iterator source removed")
         self.flag = flag = object()
@@ -110,6 +123,7 @@ def LookAlong(axis):
         def __init__(self, value):
             self.value = value
 
+        @property
         def shape(self):
             return self.value.shape[axis]
 
@@ -125,9 +139,12 @@ class PassthroughMap(PassthroughTransform):
     def handoff(self):
         return self.iterator
 
-    def __aiter__(self):
+    async def iter(self):
         async for i in self.iterator:
             yield self.apply(i)
+
+    def __aiter__(self):
+        return self.iter()
 
 class Group:
     def __init__(self, concat):
@@ -150,6 +167,7 @@ class Group:
                 self.consumed = amount - taking + x.shape
                 break
         if taking == amount or not exact:
+            self.shape += amount - taking
             self.consumed = 0
             res = self.concat([self.holding[0][start:]] + self.holding[1 : i])
             self.holding = self.holding[i + 1:]
@@ -169,22 +187,33 @@ class Taken:
 class Batcher(PassthroughTransform):
     def __init__(self, iterator, size, axis=-1, exact=False):
         assert isinstance(size, int) and size > 0
-        self.size, self.exact = size, exact
+        self.size, self._axis, self.exact = size, axis, exact
         if isinstance(iterator, __class__):
             self.group = iterator.group
-        preview = Unwrap(iterator)
-        self.axis = len(preview.shape) + axis if axis < 0 else axis
-        transform = LookAlong(self.axis)
-        if not hasattr(self, "group"):
-            self.group = Group(preview.concat)
-        self.iterator = PassthroughMap(transform, BoxedIterator(preview))
+        self.preview = Unwrap(iterator)
+
+    _iterator = None
+    @property
+    async def iterator(self):
+        if self._iterator is None:
+            self.axis = len(await self.preview.shape) + self._axis \
+                    if self._axis < 0 else self._axis
+            if not hasattr(self, "group"):
+                self.group = Group(await self.preview.concat)
+            self._iterator = PassthroughMap(
+                    LookAlong(self.axis), BoxedIterator(self.preview))
+        return self._iterator
 
     def handoff(self):
         self.group = Taken()
-        return self.iterator
+        return self.preview if self._iterator is None else self._iterator
 
-    def __anext__(self):
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        iterator = aiter(await self.iterator)
         while self.group.shape < self.size:
-            self.group.add(anext(self.iterator))
+            self.group.add(await anext(iterator))
         return self.group.take(self.size, self.exact)
 

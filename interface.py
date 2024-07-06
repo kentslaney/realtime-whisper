@@ -1,6 +1,7 @@
 import asyncio, os, sys
 from whisper import load_model
-from transcribe import Transcriber, PassthroughProperty
+from transcribe import Transcriber
+from utils import PassthroughProperty
 from audio import LiveCapture, AudioFileStitch
 from whisper.audio import CHUNK_LENGTH, FRAMES_PER_SECOND
 
