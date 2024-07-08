@@ -3,6 +3,11 @@ import pdb, pathlib, sys
 class Cwdb(pdb.Pdb):
     zoning = False
     def do_zoned(self, arg):
+        """z(oned)
+
+        Execute the current line, stop at the first possible occasion inside a
+        file directly contained by the current working directory.
+        """
         if arg:
             self._print_invalid_arg(arg)
             return
