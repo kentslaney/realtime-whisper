@@ -24,13 +24,14 @@ from whisper.utils import (
 from utils import PassthroughProperty
 
 if TYPE_CHECKING:
-    from .model import Whisper
+    from whisper.model import Whisper
 
 class Hypothesis:
     def __init__(self, language, since, evidence, last):
         self.language, self.since = language, since
         self.evidence, self.last = evidence, last
 
+# mostly 1:1 with whisper.transcribe; repeated because of scope interface issues
 class Transcriber(metaclass=PassthroughProperty.defaults):
     prefix = '''"'\u201c\u00bf([{-'''
     postfix = '''"'.\u3002,\uff0c!\uff01?\uff1f:\uff1a\u201d)]}\u3001'''

@@ -130,7 +130,9 @@ class ArrayStream(AudioSink):
         return N_FRAMES
 
     # dft_pad: add frames partially padded by centered STFT
-    def runoff(self, dft_pad=False):
+    dft_pad = False
+    def runoff(self, dft_pad=None):
+        dft_pad = self.dft_pad if dft_pad is None else dft_pad
         if dft_pad:
             overrun = (ceildiv(N_FFT, HOP_LENGTH) - 1) * HOP_LENGTH
             spectogram = torch.cat((self.sees, torch.zeros(overrun, **self.kw)))

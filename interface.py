@@ -112,3 +112,4 @@ class EnTranscriber(AudioTranscriber):
 if __name__ == "__main__":
     # ToDTranscriber(load_model("large")).stdout(5, n_mels=128)
     EnTranscriber(load_model("base.en")).stdout(3)
+
