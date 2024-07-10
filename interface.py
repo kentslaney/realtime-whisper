@@ -4,7 +4,6 @@ from transcribe import Transcriber
 from utils import PassthroughProperty
 from audio import LiveCapture, AudioFileStitch, Recorder
 from whisper.audio import CHUNK_LENGTH, FRAMES_PER_SECOND
-import debug
 
 def hms(sec):
     trim = sec < 3600
@@ -89,6 +88,7 @@ class AudioTranscriber(Transcriber):
 
     streamer = LiveCapture
     def stdout(self, sec=1, exact=False, **kw):
+        kw["n_mels"] = self.model.dims.n_mels
         stream, printer = self.streamer(**kw), WatchJoin(self.repr)
         async def inner():
             print("Starting transcription...")
@@ -124,6 +124,5 @@ class EnTranscriber(ToDTranscriber):
     _language = "en"
 
 if __name__ == "__main__":
-    # EnTranscriber(load_model("large")).stdout(5, n_mels=128)
     EnTranscriber(load_model("base.en")).stdout(3)
 

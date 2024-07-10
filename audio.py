@@ -98,7 +98,6 @@ class ArrayStream(AudioSink):
         return sees[hopped:]
 
     async def window(self, iterator):
-        # bit ironic referring to the (in-buffer) audio data as "seen"
         iterator = self.fft_offset(iterator)
         async for data in iterator:
             data = torch.from_numpy(data)
@@ -133,7 +132,7 @@ class ArrayStream(AudioSink):
     def padding(self, content_frames):
         return N_FRAMES
 
-    # dft_pad: add frames partially padded by centered STFT
+    # dft_pad: add ending content frames to match padding from a centered STFT
     dft_pad = False
     def runoff(self, dft_pad=None):
         dft_pad = self.dft_pad if dft_pad is None else dft_pad
