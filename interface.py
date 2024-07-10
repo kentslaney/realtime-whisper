@@ -2,7 +2,7 @@ import asyncio, os, sys
 from whisper import load_model
 from transcribe import Transcriber
 from utils import PassthroughProperty
-from audio import LiveCapture, AudioFileStitch
+from audio import LiveCapture, AudioFileStitch, Recorder
 from whisper.audio import CHUNK_LENGTH, FRAMES_PER_SECOND
 import debug
 
@@ -87,13 +87,27 @@ class AudioTranscriber(Transcriber):
     def repr(self, segment):
         return self.gutter(segment) + "    " + segment["text"]
 
+    streamer = LiveCapture
     def stdout(self, sec=1, exact=False, **kw):
-        stream, printer = LiveCapture(**kw), WatchJoin(self.repr)
+        stream, printer = self.streamer(**kw), WatchJoin(self.repr)
         async def inner():
             print("Starting transcription...")
             async for out in self.loop(stream, sec, exact=exact):
                 printer(out["segments"])
         asyncio.run(inner())
+
+class RecorderTranscriber(AudioTranscriber):
+    def __init__(self, *a, fname='out.json', **kw):
+        global json
+        import json
+        self.fname = fname
+
+    streamer = Recorder
+    async def loop(self, *a, **kw):
+        async for data in super().loop(*a, **kw):
+            with open(self.fname, 'w') as fp:
+                json.dump(data, fp)
+            yield data
 
 class ToDTranscriber(AudioTranscriber):
     def __init__(self, *a, **kw):
@@ -106,10 +120,10 @@ class ToDTranscriber(AudioTranscriber):
         return str(segment["id"]).rjust(4) + "  " + tod(
                 self.initial + segment["start"])
 
-class EnTranscriber(AudioTranscriber):
+class EnTranscriber(ToDTranscriber):
     _language = "en"
 
 if __name__ == "__main__":
-    # ToDTranscriber(load_model("large")).stdout(5, n_mels=128)
+    # EnTranscriber(load_model("large")).stdout(5, n_mels=128)
     EnTranscriber(load_model("base.en")).stdout(3)
 

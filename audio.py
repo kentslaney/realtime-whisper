@@ -40,8 +40,12 @@ class ArrayStream(AudioSink):
         self.hann = torch.hann_window(N_FFT).to(self.sees.device)
         self.filters = mel_filters(self.sees.device, n_mels)
 
+    write_blockable = True
     def write(self, data):
-        self.q.put_nowait(data)
+        if write_blockable:
+            return self.q.put(data)
+        else:
+            self.q.put_nowait(data)
 
     def load(self, data):
         return np.frombuffer(
@@ -208,7 +212,7 @@ class RawAudioFile(ArrayStream):
         fp = open(self.fname, 'rb') if self.fp is None else self.fp
         data = fp.read(self.period)
         while len(data) != 0:
-            self.write(data)
+            await self.write(data)
             data = fp.read(self.period)
         self.finished.set()
 
@@ -279,6 +283,7 @@ class AudioFileStitch(ArrayStream):
             self.finished.set()
 
 class LiveCapture(ArrayStream):
+    write_blockable = False
     def __init__(
             self, *, period=HOP_LENGTH, source='default', loop_delay=.001,
             **kw):
@@ -318,5 +323,6 @@ class Recorder(LiveCapture):
         self.fp = open(fname, 'wb')
 
     def write(self, data):
+        super().write(data)
         self.fp.write(data)
 
