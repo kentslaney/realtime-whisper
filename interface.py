@@ -1,7 +1,10 @@
 import asyncio, os, sys
 from whisper import load_model
-from transcribe import Transcriber, PassthroughProperty
+from transcribe import Transcriber
+from utils import PassthroughProperty
 from audio import LiveCapture, AudioFileStitch
+from whisper.audio import CHUNK_LENGTH, FRAMES_PER_SECOND
+import debug
 
 def hms(sec):
     trim = sec < 3600
@@ -12,8 +15,8 @@ def hms(sec):
     c = str(round((sec % 1) * 100)).rjust(2, '0')
     return h + m + s + c
 
-class EnTranscriber(Transcriber):
-    _language = "en"
+def tod(seconds):
+    return time.strftime("%H:%M:%S", time.localtime(seconds))
 
 class WatchJoin(metaclass=PassthroughProperty.defaults):
     def __init__(self, transform=repr, buffer=1_000):
@@ -61,14 +64,24 @@ class WatchJoin(metaclass=PassthroughProperty.defaults):
             print(self.transform(value[i]))
         sys.stdout.flush()
 
-class AudioTranscriber(EnTranscriber):
+class MinimalTranscriber(Transcriber):
+    exact, chlen = True, CHUNK_LENGTH
+    async def loop(self, stream, **kw):
+        data = await stream.request(self.chlen, self.exact)
+        while data.shape[-1] > 0:
+            self(data, stream.offset, True)
+            t = self.chlen - (stream.offset + data.shape[-1] - self.seek) \
+                    / FRAMES_PER_SECOND + CHUNK_LENGTH
+            data = await stream.request(t, self.exact)
+        return self.all_segments
+
+class AudioTranscriber(Transcriber):
     async def loop(self, stream, sec, **kw):
         async for data in stream.push(sec, **kw):
             self.restore(stream.offset)
             yield self(data, stream.offset)
 
     def gutter(self, segment):
-        # return hms(segment["start"]) + " - " + hms(segment["end"])
         return str(segment["id"]).rjust(4) + "  " + hms(segment["start"])
 
     def repr(self, segment):
@@ -82,9 +95,6 @@ class AudioTranscriber(EnTranscriber):
                 printer(out["segments"])
         asyncio.run(inner())
 
-def tod(seconds):
-    return time.strftime("%H:%M:%S", time.localtime(seconds))
-
 class ToDTranscriber(AudioTranscriber):
     def __init__(self, *a, **kw):
         global time
@@ -96,6 +106,9 @@ class ToDTranscriber(AudioTranscriber):
         return str(segment["id"]).rjust(4) + "  " + tod(
                 self.initial + segment["start"])
 
+class EnTranscriber(AudioTranscriber):
+    _language = "en"
+
 if __name__ == "__main__":
     # ToDTranscriber(load_model("large")).stdout(5, n_mels=128)
-    ToDTranscriber(load_model("medium")).stdout(3)
+    EnTranscriber(load_model("base.en")).stdout(3)

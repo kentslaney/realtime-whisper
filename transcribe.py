@@ -1,7 +1,7 @@
 from collections import namedtuple
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 import numpy as np
-import torch
+import torch, warnings
 
 from whisper.audio import (
     FRAMES_PER_SECOND,
@@ -21,44 +21,10 @@ from whisper.utils import (
     make_safe,
 )
 
+from utils import PassthroughProperty
+
 if TYPE_CHECKING:
     from .model import Whisper
-
-# boilerplate for property with _{name} storage and passthrough getter/setter
-class PassthroughProperty:
-    def __init__(self, default):
-        self.value = default
-
-    f = None
-    def setter(self, f):
-        self.f = f
-        return self
-
-    g = None
-    def property(self, g):
-        self.g = property(g)
-        return self
-
-    @staticmethod
-    def defaults(clsname, bases, attrs):
-        def closure(f, v):
-            def prop(self):
-                return getattr(self, v)
-            def setter(self, value):
-                setattr(self, v, value)
-            prop.__name__ = setter.__name__ = f
-            return property(prop), setter
-
-        updates = {}
-        for k, v in attrs.items():
-            if not isinstance(v, PassthroughProperty):
-                continue
-            private = "_" + k
-            assert private not in attrs
-            updates[private] = v.value
-            getter, setter = closure(k, private)
-            updates[k] = (v.g or getter).setter(v.f or setter)
-        return type(clsname, bases, {**attrs, **updates})
 
 class Hypothesis:
     def __init__(self, language, since, evidence, last):
@@ -527,7 +493,7 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
                 if last_word_end is not None:
                     self.last_speech_timestamp = last_word_end
 
-    def __call__(self, mel, offset=0):
+    def __call__(self, mel, offset=0, single_pass=False):
         self.latest, self.frame_offset = mel, offset
         content_frames = mel.shape[-1] - N_FRAMES + offset
         content_duration = float(content_frames * HOP_LENGTH / SAMPLE_RATE)
@@ -615,6 +581,9 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
             if not self.condition_on_previous_text or result.temperature > 0.5:
                 # do not feed the prompt tokens if a high temperature was used
                 self.prompt_reset_since = len(self.all_tokens)
+
+            if single_pass:
+                break
 
         res = dict(
                 segments=self.all_segments, language=self.language,

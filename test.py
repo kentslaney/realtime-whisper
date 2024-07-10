@@ -1,10 +1,12 @@
-import torch
+import torch, pathlib
 
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
 from audio import *
 from transcribe import Transcriber
+from interface import *
+from utils import Batcher
 
 end_locals()
 
@@ -15,10 +17,13 @@ async def test_range(x, y):
 def test_resample(x, y, z):
     res = []
     async def inner():
-        async for i in resample(test_range(x, y), z):
+        async for i in Batcher(test_range(x, y), z, exact=True):
             res.append(i)
     asyncio.run(inner())
     return res
+
+# if __name__ == "__main__":
+#     print(test_resample(6, 7, 3))
 
 class LenTest(AudioFile):
     def __init__(self, **kw):
@@ -88,4 +93,20 @@ class TranscriberTest(Transcriber):
 
     def get_tokenizer(self, language, **kw):
         return MockTokenizer(language, **kw)
+
+class ReadableMinimal(MinimalTranscriber, AudioTranscriber):
+    def gutter(self, segment):
+        return hms(segment["start"]) + " - " + hms(segment["end"])
+
+    def __repr__(self):
+        return "\n".join(map(self.repr, self.all_segments))
+
+def MinimalTest():
+    model = ReadableMinimal(load_model("base.en"))
+    asyncio.run(model.loop(AudioFileStitch(seq=str(
+            pathlib.Path(__file__).parents[0] / "tests" / "*.wav"))))
+    return model
+
+if __name__ == "__main__":
+    print(MinimalTest())
 

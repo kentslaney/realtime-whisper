@@ -10,56 +10,11 @@ from whisper.audio import (
     mel_filters,
 )
 
+from utils import Batcher
+
 # https://stackoverflow.com/a/17511341/3476782
 def ceildiv(a, b):
     return -(a // -b)
-
-async def apeek(iterator):
-    try:
-        initial = await anext(iterator)
-    except StopAsyncIteration:
-        return iter(()), (), None
-    async def concat():
-        yield initial
-        async for v in iterator:
-            yield v
-    return concat(), initial.shape, initial.dtype
-
-async def resample(iterator, size, axis=-1, exact=False):
-    clean, init = True, 0
-    iterator, shape, dtype = await apeek(iterator)
-    if dtype is None:
-        return
-    axis = len(shape) + axis if axis < 0 else axis
-    take = lambda sample, pos: sample[(slice(None),) * axis + (pos,)]
-    empty, concat = (np.empty, np.concatenate) if isinstance(dtype, np.dtype) \
-            else (torch.zeros, torch.cat)
-    reset = running = empty((0,) * len(shape), dtype=dtype)
-    async for sample in iterator:
-        if not clean and running.shape[axis] > 0:
-            if sample.shape[axis] < init:
-                init -= sample.shape[axis]
-                running = concat((running, sample), axis)
-                continue
-            ending = take(sample, slice(0, init))
-            yield concat((running, ending), axis)
-            running = reset
-        remainder = (sample.shape[axis] - init) % size
-        if exact:
-            bounds = [range(
-                    init, sample.shape[axis] + i, size)[i:] for i in range(2)]
-            for pos in map(slice, *bounds):
-                yield take(sample, pos)
-        else:
-            end = sample.shape[axis] - remainder
-            if init != end:
-                yield take(sample, slice(init, end))
-        if remainder > 0:
-            clean = False
-            running = take(sample, slice(-remainder, None))
-        init = remainder and size - remainder
-    if running.shape[axis] > 0:
-        yield running
 
 class AudioSink:
     def __init__(self, *, rate=SAMPLE_RATE, **kw):
@@ -114,8 +69,12 @@ class ArrayStream(AudioSink):
         except asyncio.QueueEmpty:
             pass
 
+    loading = None
     async def fft_offset(self, iterator):
-        iterator = resample(self.loader(iterator), HOP_LENGTH)
+        if self.loading is None:
+            self.loading = self.loader(iterator)
+        self.loading = Batcher(self.loading, HOP_LENGTH)
+        iterator = aiter(self.loading)
         window = np.zeros((0,), dtype=np.float32)
         while window.size < ceildiv(N_FFT, 2):
             try:
@@ -170,11 +129,15 @@ class ArrayStream(AudioSink):
     def padding(self, content_frames):
         return N_FRAMES
 
-    def runoff(self):
-        overrun = (ceildiv(N_FFT, HOP_LENGTH) - 1) * HOP_LENGTH
-        spectogram = torch.cat((self.sees, torch.zeros(overrun, **self.kw)))
-        if spectogram.shape[-1] >= N_FFT:
-            spectogram = self.transform(self.dft(spectogram))
+    # dft_pad: add frames partially padded by centered STFT
+    def runoff(self, dft_pad=False):
+        if dft_pad:
+            overrun = (ceildiv(N_FFT, HOP_LENGTH) - 1) * HOP_LENGTH
+            spectogram = torch.cat((self.sees, torch.zeros(overrun, **self.kw)))
+            if spectogram.shape[-1] >= N_FFT:
+                spectogram = self.transform(self.dft(spectogram))
+        else:
+            spectogram = torch.zeros(0)
         padding = self.padding(self.spectogram.shape[-1] + spectogram.shape[-1])
         pad = torch.zeros(self.n_mels, max(0, padding), **self.kw)
         spectogram = torch.cat((self.spectogram, spectogram, pad), -1)
@@ -192,22 +155,37 @@ class ArrayStream(AudioSink):
         self.spectogram = self.spectogram[:, cutoff:]
         return self.runoff()
 
+    staging = None
     async def _push(self, sec, exact=False):
-        resampling = sec * SAMPLE_RATE // HOP_LENGTH
-        iterator = self.window(self.buffer())
-        async for frame in resample(iterator, resampling, exact=exact):
-            resampled = resampling if exact else frame.shape[-1]
-            cutoff = max(self.spectogram.shape[-1] + resampled - N_FRAMES, 0)
+        batching = int(sec * SAMPLE_RATE // HOP_LENGTH)
+        if self.staging is None:
+            self.staging = self.window(self.buffer())
+        self.staging = Batcher(self.staging, batching, exact=exact)
+        async for frame in self.staging:
+            batched = batching if exact else frame.shape[-1]
+            cutoff = max(self.spectogram.shape[-1] + batched - N_FRAMES, 0)
             self.offset += cutoff
             self.spectogram = torch.cat((
                     self.spectogram[:, cutoff:], frame), -1)
             yield self.runoff()
 
+    reader = None
+    def start(self, **kw):
+        if self.reader is None:
+            self.reader = asyncio.create_task(self.read(**kw))
+
     async def push(self, sec, exact=False, **kw):
-        reader = asyncio.create_task(self.read(**kw))
+        self.start(**kw)
         async for i in self._push(sec, exact):
             yield i
-        await reader
+        await self.reader
+
+    async def request(self, sec, exact=True, **kw):
+        try:
+            return await anext(self.push(sec, exact))
+        except StopAsyncIteration:
+            await self.reader
+            return np.zeros((self.n_mels, 0), dtype=np.float32)
 
     async def full(self, **kw):
         await self.read(**kw)
@@ -223,8 +201,9 @@ class RawAudioFile(ArrayStream):
         self.fname = fname
         self.period = period
 
+    fp = None
     async def read(self):
-        fp = open(self.fname, 'rb')
+        fp = open(self.fname, 'rb') if self.fp is None else self.fp
         data = fp.read(self.period)
         while len(data) != 0:
             self.write(data)
@@ -236,7 +215,7 @@ class AudioFile(RawAudioFile):
         global subprocess
         import subprocess
         assert not subprocess.run(
-            ["which", "ffmpeg"], stdout=subprocess.PIPE).returncode
+                ["which", "ffmpeg"], stdout=subprocess.PIPE).returncode
         super().__init__(period=period or -1, fname=fname, **kw)
 
     async def read(self):
@@ -252,11 +231,12 @@ class AudioFile(RawAudioFile):
             "-"
         ]
         ps = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.fp = ps.stdout
         await super().read()
+        _, stderr = ps.communicate()
         if ps.returncode not in (None, 0):
-            raise Exception
+            raise RuntimeError(f"Failed to load audio: {stderr.decode()}")
 
 class SequenceDone(Exception):
     pass
@@ -287,7 +267,7 @@ class AudioFileStitch(ArrayStream):
     def __init__(self, *, seq="*.wav", period=SAMPLE_RATE, **kw):
         super().__init__(**kw)
         self.seq = AudioFileSequence(seq=seq, period=period, **kw)
-        self.seq.q = self.q
+        self.seq.write = self.write
 
     async def read(self):
         try:
