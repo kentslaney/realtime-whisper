@@ -1,4 +1,4 @@
-import torch
+import torch, pathlib
 
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
@@ -103,7 +103,8 @@ class ReadableMinimal(MinimalTranscriber, AudioTranscriber):
 
 def MinimalTest():
     model = ReadableMinimal(load_model("base.en"))
-    asyncio.run(model.loop(AudioFileStitch()))
+    asyncio.run(model.loop(AudioFileStitch(seq=str(
+            pathlib.Path(__file__).parents[0] / "tests" / "smol" / "*.wav"))))
     return model
 
 if __name__ == "__main__":

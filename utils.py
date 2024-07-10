@@ -48,7 +48,7 @@ class LoopbackIterator:
     async def __anext__(self):
         if not hasattr(self, "_iter"):
             self.__aiter__()
-        yield await anext(self._iter)
+        return await anext(self._iter)
 
 class Unwrap(LoopbackIterator):
     def __init__(self, iterator):
@@ -134,6 +134,9 @@ def LookAlong(axis):
         def __getitem__(self, idx):
             return self.value[empties + (idx,)]
 
+        def __next__(self):
+            return self.value
+
     return LookAlong
 
 class PassthroughMap(PassthroughTransform):
@@ -148,7 +151,7 @@ class PassthroughMap(PassthroughTransform):
             yield self.apply(i)
 
 class Group:
-    def __init__(self, concat):
+    def __init__(self, concat, axis=-1):
         self.concat = concat
         self.holding = []
         self.consumed = 0
@@ -170,13 +173,15 @@ class Group:
         if taking == amount or not exact:
             self.shape += amount - taking
             self.consumed = 0
-            res = self.concat([self.holding[0][start:]] + self.holding[1 : i])
+            res = self.concat([self.holding[0][start:]] + [
+                    i.value for i in self.holding[1 : i]])
             self.holding = self.holding[i + 1:]
             return res
         if i == 0:
             return self.holding[0][start:self.consumed]
         res = self.concat(
-                [self.holding[0][start:]] + self.holding[1 : i - 1] +
+                [self.holding[0][start:]] +
+                [i.value for i in self.holding[1 : i - 1]] +
                 [self.holding[i][:self.consumed]])
         self.holding = self.holding[i:]
         return res
@@ -193,13 +198,17 @@ class Batcher(PassthroughTransform):
             self.group = iterator.group
         self.preview = Unwrap(iterator)
 
+    async def concat(self):
+        f = await self.preview.concat
+        return lambda tensors: f(tensors, self.axis)
+
     _iterator = None
     async def iterator(self):
         if self._iterator is None:
             self.axis = len(await self.preview.shape) + self._axis \
                     if self._axis < 0 else self._axis
             if not hasattr(self, "group"):
-                self.group = Group(await self.preview.concat)
+                self.group = Group(await self.concat())
             self._iterator = PassthroughMap(
                     LookAlong(self.axis), BoxedIterator(self.preview))
         return self._iterator

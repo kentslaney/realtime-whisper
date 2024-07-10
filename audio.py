@@ -212,7 +212,7 @@ class AudioFile(RawAudioFile):
         global subprocess
         import subprocess
         assert not subprocess.run(
-            ["which", "ffmpeg"], stdout=subprocess.PIPE).returncode
+                ["which", "ffmpeg"], stdout=subprocess.PIPE).returncode
         super().__init__(period=period or -1, fname=fname, **kw)
 
     async def read(self):

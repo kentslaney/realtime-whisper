@@ -66,7 +66,6 @@ class WatchJoin(metaclass=PassthroughProperty.defaults):
 
 class MinimalTranscriber(Transcriber):
     async def loop(self, stream, **kw):
-        breakpoint()
         for i in range(20):
             data = await stream.request(18)
             print('out', data, data.shape, stream.offset)
