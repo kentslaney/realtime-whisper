@@ -42,7 +42,7 @@ class ArrayStream(AudioSink):
 
     write_blockable = True
     def write(self, data):
-        if write_blockable:
+        if self.write_blockable:
             return self.q.put(data)
         else:
             self.q.put_nowait(data)

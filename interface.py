@@ -79,7 +79,7 @@ class AudioTranscriber(Transcriber):
     async def loop(self, stream, sec, **kw):
         async for data in stream.push(sec, **kw):
             self.restore(stream.offset)
-            yield self(data, stream.offset)
+            yield self(data, stream.offset, True)
 
     def gutter(self, segment):
         return str(segment["id"]).rjust(4) + "  " + hms(segment["start"])

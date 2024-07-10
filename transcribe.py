@@ -116,8 +116,8 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
             return None
         if self._seek == self._hypothesis.last:
             return self._hypothesis.language
-        if self.frame_offset > 0:
-            mel = torch.cat((self.prev[:self.offset], self.latest), -1)
+        if self.frame_offset > 0 or self.latest.shape[-1] == N_FRAMES * 2:
+            mel = torch.cat((self.prev[:self.frame_offset], self.latest), -1)
             self._language = self.detect_language()
             return self._language
         self._hypothesis.last = self._seek
