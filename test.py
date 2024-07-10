@@ -104,7 +104,7 @@ class ReadableMinimal(MinimalTranscriber, AudioTranscriber):
 def MinimalTest():
     model = ReadableMinimal(load_model("base.en"))
     asyncio.run(model.loop(AudioFileStitch(seq=str(
-            pathlib.Path(__file__).parents[0] / "tests" / "smol" / "*.wav"))))
+            pathlib.Path(__file__).parents[0] / "tests" / "*.wav"))))
     return model
 
 if __name__ == "__main__":

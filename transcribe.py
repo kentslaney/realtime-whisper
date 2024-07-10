@@ -493,7 +493,7 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
                 if last_word_end is not None:
                     self.last_speech_timestamp = last_word_end
 
-    def __call__(self, mel, offset=0):
+    def __call__(self, mel, offset=0, single_pass=False):
         self.latest, self.frame_offset = mel, offset
         content_frames = mel.shape[-1] - N_FRAMES + offset
         content_duration = float(content_frames * HOP_LENGTH / SAMPLE_RATE)
@@ -581,6 +581,9 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
             if not self.condition_on_previous_text or result.temperature > 0.5:
                 # do not feed the prompt tokens if a high temperature was used
                 self.prompt_reset_since = len(self.all_tokens)
+
+            if single_pass:
+                break
 
         res = dict(
                 segments=self.all_segments, language=self.language,

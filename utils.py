@@ -174,14 +174,14 @@ class Group:
             self.shape += amount - taking
             self.consumed = 0
             res = self.concat([self.holding[0][start:]] + [
-                    i.value for i in self.holding[1 : i]])
+                    i.value for i in self.holding[1 : i + 1]])
             self.holding = self.holding[i + 1:]
             return res
         if i == 0:
             return self.holding[0][start:self.consumed]
         res = self.concat(
                 [self.holding[0][start:]] +
-                [i.value for i in self.holding[1 : i - 1]] +
+                [i.value for i in self.holding[1 : i]] +
                 [self.holding[i][:self.consumed]])
         self.holding = self.holding[i:]
         return res

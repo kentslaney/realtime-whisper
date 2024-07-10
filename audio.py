@@ -129,11 +129,15 @@ class ArrayStream(AudioSink):
     def padding(self, content_frames):
         return N_FRAMES
 
-    def runoff(self):
-        overrun = (ceildiv(N_FFT, HOP_LENGTH) - 1) * HOP_LENGTH
-        spectogram = torch.cat((self.sees, torch.zeros(overrun, **self.kw)))
-        if spectogram.shape[-1] >= N_FFT:
-            spectogram = self.transform(self.dft(spectogram))
+    # dft_pad: add frames partially padded by centered STFT
+    def runoff(self, dft_pad=False):
+        if dft_pad:
+            overrun = (ceildiv(N_FFT, HOP_LENGTH) - 1) * HOP_LENGTH
+            spectogram = torch.cat((self.sees, torch.zeros(overrun, **self.kw)))
+            if spectogram.shape[-1] >= N_FFT:
+                spectogram = self.transform(self.dft(spectogram))
+        else:
+            spectogram = torch.zeros(0)
         padding = self.padding(self.spectogram.shape[-1] + spectogram.shape[-1])
         pad = torch.zeros(self.n_mels, max(0, padding), **self.kw)
         spectogram = torch.cat((self.spectogram, spectogram, pad), -1)
@@ -177,7 +181,6 @@ class ArrayStream(AudioSink):
         await self.reader
 
     async def request(self, sec, exact=True, **kw):
-        return await anext(self.push(sec, exact))
         try:
             return await anext(self.push(sec, exact))
         except StopAsyncIteration:

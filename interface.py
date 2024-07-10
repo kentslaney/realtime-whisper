@@ -65,21 +65,14 @@ class WatchJoin(metaclass=PassthroughProperty.defaults):
         sys.stdout.flush()
 
 class MinimalTranscriber(Transcriber):
+    exact, chlen = True, CHUNK_LENGTH
     async def loop(self, stream, **kw):
-        for i in range(20):
-            data = await stream.request(18)
-            print('out', data, data.shape, stream.offset)
-        raise Exception # TODO
-        exact = True
-        chlen = 25
-        data = await stream.request(chlen, exact)
-        while len(data) > 0:
-            self(data, stream.offset)
-            t = chlen - CHUNK_LENGTH - (
-                    stream.offset + len(data) - self.seek) / FRAMES_PER_SECOND
-            print(t)
-            data = await stream.request(t, exact)
-            print(data)
+        data = await stream.request(self.chlen, self.exact)
+        while data.shape[-1] > 0:
+            self(data, stream.offset, True)
+            t = self.chlen - (stream.offset + data.shape[-1] - self.seek) \
+                    / FRAMES_PER_SECOND + CHUNK_LENGTH
+            data = await stream.request(t, self.exact)
         return self.all_segments
 
 class AudioTranscriber(Transcriber):
