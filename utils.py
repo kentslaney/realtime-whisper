@@ -186,6 +186,13 @@ class Group:
         self.holding = self.holding[i:]
         return res
 
+    def all(self):
+        res = self.concat([i.value for i in self.holding])
+        self.shape = 0
+        self.consumed = 0
+        self.holding = []
+        return res
+
 class Taken:
     def take(self, *a, **kw):
         raise Exception("batch queue moved")
@@ -223,6 +230,11 @@ class Batcher(PassthroughTransform):
     async def __anext__(self):
         iterator = aiter(await self.iterator())
         while self.group.shape < self.size:
-            self.group.add(await anext(iterator))
+            try:
+                self.group.add(await anext(iterator))
+            except StopAsyncIteration:
+                if self.group.shape > 0:
+                    return self.group.all()
+                raise
         return self.group.take(self.size, self.exact)
 
