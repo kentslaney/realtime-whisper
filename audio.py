@@ -197,8 +197,18 @@ class ArrayStream(AudioSink):
         return await self.pull()
 
     def sequential(self, **kw):
-        asyncio.run(self.read(**kw))
-        return asyncio.run(self.pull())
+        return asyncio.run(self.full(**kw))
+
+    async def amplitudes(self, **kw):
+        self.start(**kw)
+        res = []
+        async for data in self.loader(self.buffer()):
+            res.append(data)
+        await self.reader
+        return np.concatenate(res)
+
+    def all_amplitudes(self, **kw):
+        return asyncio.run(self.amplitudes(**kw))
 
 class RawAudioFile(ArrayStream):
     def __init__(self, *, period=HOP_LENGTH, fname='out.raw', **kw):

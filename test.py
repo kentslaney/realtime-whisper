@@ -101,12 +101,19 @@ class ReadableMinimal(MinimalTranscriber, AudioTranscriber):
     def __repr__(self):
         return "\n".join(map(self.repr, self.all_segments))
 
-def MinimalTest():
-    model = ReadableMinimal(load_model("base.en"))
-    asyncio.run(model.loop(AudioFileStitch(seq=str(
-            pathlib.Path(__file__).parents[0] / "tests" / "*.wav"))))
-    return model
+class InMemoryStitch(AudioFileStitch):
+    dft_pad = True
+
+def MinimalTest(seq=str(pathlib.Path(__file__).parents[0] / "tests" / "*.wav")):
+    from whisper import load_model, transcribe
+    model = load_model("base.en")
+    transcriber = lambda: ReadableMinimal(model)
+    stream = lambda: InMemoryStitch(seq=seq)
+    minimal = asyncio.run(transcriber().loop(stream()))
+    polyfill = transcriber()(stream().sequential())
+    original = transcribe(model, stream().all_amplitudes())
+    return minimal, polyfill, original
 
 if __name__ == "__main__":
-    print(MinimalTest())
+    print(*MinimalTest(), sep="\n")
 

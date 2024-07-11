@@ -1,5 +1,4 @@
 import asyncio, os, sys
-from whisper import load_model
 from transcribe import Transcriber
 from utils import PassthroughProperty
 from audio import LiveCapture, AudioFileStitch, Recorder
@@ -124,5 +123,6 @@ class EnTranscriber(ToDTranscriber):
     _language = "en"
 
 if __name__ == "__main__":
+    from whisper import load_model
     EnTranscriber(load_model("base.en")).stdout(3)
 
