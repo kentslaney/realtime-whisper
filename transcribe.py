@@ -42,10 +42,9 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
     _decode_options, decode_props = {}, ("fp16", "language", "task")
     @property
     def decode_options(self):
-        return {
-                **self._decode_options,
-                **{k: getattr(self, k) for k in self.decode_props}
-            }
+        for k in self.decode_props:
+            self._decode_options[k] = getattr(self, k)
+        return self._decode_options
 
     @decode_options.setter
     def decode_options(self, value):

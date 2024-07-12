@@ -120,12 +120,16 @@ class ArrayStream(AudioSink):
                 return_complex=True)
 
     # https://github.com/openai/whisper/blob/c5d4256/whisper/audio.py#L149
+    log_spec_bound = None
     def transform(self, stft):
         magnitudes = stft.abs() ** 2
         mel_spec = self.filters @ magnitudes
 
         log_spec = torch.clamp(mel_spec, min=1e-10).log10()
-        log_spec = torch.maximum(log_spec, log_spec.max() - 8.0)
+        # causes values to not precisely match the original
+        self.log_spec_bound = log_spec.max() if self.log_spec_bound is None \
+                else torch.maximum(log_spec.max(), self.log_spec_bound)
+        log_spec = torch.maximum(log_spec, self.log_spec_bound - 8.0)
         log_spec = (log_spec + 4.0) / 4.0
         return log_spec
 
