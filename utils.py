@@ -1,7 +1,7 @@
 import collections, torch, pathlib
 import numpy as np
-from collections.abc import Callable
-from typing import Any, Optional, Generic, TypeVar, Union
+from collections.abc import Callable, AsyncIterable, AsyncIterator, Awaitable
+from typing import Any, Optional, Generic, TypeVar, Union, Tuple
 
 PathType = Union[str, pathlib.Path]
 T = TypeVar("T")
@@ -11,13 +11,13 @@ class PassthroughProperty(Generic[T]):
     def __init__(self, default: T):
         self.value = default
 
-    f: Optional[Callable[[T], None]] = None
-    def setter(self, f: Callable[[T], None]):
+    f: Optional[Callable[[Any, T], None]] = None
+    def setter(self, f: Callable[[Any, T], None]):
         self.f = f
         return self
 
     g: Optional[property] = None
-    def property(self, g: Callable[[], T]):
+    def property(self, g: Callable[[Any], T]):
         self.g = property(g)
         return self
 
@@ -36,13 +36,19 @@ class PassthroughProperty(Generic[T]):
             if not isinstance(v, PassthroughProperty):
                 continue
             private = "_" + k
-            assert private not in attrs
             updates[private] = v.value
             getter, setter = closure(k, private)
             updates[k] = (v.g or getter).setter(v.f or setter)
         return type(clsname, bases, {**attrs, **updates})
 
-class LoopbackIterator:
+A = TypeVar("A", bound=Union[np.ndarray, torch.Tensor])
+
+class ArrayWrapper(Generic[A]):
+    pass
+
+ArrayTypes = Union[A, ArrayWrapper[A]]
+
+class LoopbackIterator(Generic[A]):
     async def iter(self):
         raise NotImplementedError
 
@@ -50,16 +56,23 @@ class LoopbackIterator:
         self._iter = self.iter()
         return self
 
-    async def __anext__(self):
+    async def __anext__(self) -> ArrayTypes:
         if not hasattr(self, "_iter"):
             self.__aiter__()
         return await anext(self._iter)
 
+async def empty():
+    return
+    yield
+
 class Unwrap(LoopbackIterator):
-    def __init__(self, iterator):
+    _initial: Union[ArrayTypes, Awaitable[ArrayTypes]]
+    started: bool
+    iterator: AsyncIterable[ArrayTypes]
+    def __init__(self, iterator: AsyncIterable[ArrayTypes]):
         while isinstance(iterator, PassthroughTransform):
             iterator = iterator.handoff()
-        if isinstance(iterator, __class__):
+        if isinstance(iterator, Unwrap):
             self._initial, self.started = iterator.initial(), iterator.started
             self.iterator = iterator.iterator
             return
@@ -69,21 +82,21 @@ class Unwrap(LoopbackIterator):
             self._initial = anext(iterator)
             self.iterator, self.started = iterator, False
         except StopAsyncIteration:
-            self.iterator, self.started = iter(()), True
+            self.iterator, self.started = empty(), True
 
-    async def initial(self):
+    async def initial(self) -> ArrayTypes:
         while isinstance(self._initial, collections.abc.Awaitable):
             self._initial = await self._initial
         return self._initial
 
-    async def iter(self):
+    async def iter(self) -> AsyncIterator[ArrayTypes]:
         if not self.started:
             self.started = True
             yield await self.initial()
         async for i in self.iterator:
             yield i
 
-    async def prop(self, key, default):
+    async def prop(self, key: str, default):
         if hasattr(self, "initial"):
             return getattr(await self.initial(), key)
         else:
@@ -103,7 +116,7 @@ class Unwrap(LoopbackIterator):
                 else torch.cat
 
 class PassthroughTransform(LoopbackIterator):
-    def handoff(self):
+    def handoff(self) -> AsyncIterable[ArrayTypes]:
         raise NotImplementedError
 
 class BoxedIterator(PassthroughTransform):
@@ -111,11 +124,11 @@ class BoxedIterator(PassthroughTransform):
         self.iterator = iterator
         self.flag = object()
 
-    def handoff(self):
+    def handoff(self) -> AsyncIterable[ArrayTypes]:
         self.flag = None
         return self.iterator
 
-    async def iter(self):
+    async def iter(self) -> AsyncIterator[ArrayTypes]:
         if self.flag is None:
             raise Exception("iterator source removed")
         self.flag = flag = object()
@@ -124,12 +137,12 @@ class BoxedIterator(PassthroughTransform):
             if self.flag != flag:
                 raise Exception("source can only be used by one iterator")
 
-def LookAlong(axis):
+def LookAlong(axis: int):
     assert axis >= 0
     empties = (slice(None),) * axis
 
-    class LookAlong:
-        def __init__(self, value):
+    class LookAlong(ArrayWrapper):
+        def __init__(self, value: A):
             self.value = value
 
         @property
@@ -145,13 +158,15 @@ def LookAlong(axis):
     return LookAlong
 
 class PassthroughMap(PassthroughTransform):
-    def __init__(self, apply, iterator):
+    def __init__(
+            self, apply: Callable[[A], ArrayTypes],
+            iterator: AsyncIterator[A]):
         self.iterator, self.apply = iterator, apply
 
-    def handoff(self):
+    def handoff(self) -> AsyncIterator[A]:
         return self.iterator
 
-    async def iter(self):
+    async def iter(self) -> AsyncIterator[ArrayTypes]:
         async for i in self.iterator:
             yield self.apply(i)
 
@@ -206,7 +221,7 @@ class Batcher(PassthroughTransform):
     def __init__(self, iterator, size, axis=-1, exact=False):
         assert isinstance(size, int) and size > 0
         self.size, self._axis, self.exact = size, axis, exact
-        if isinstance(iterator, __class__) and hasattr(iterator, "group"):
+        if isinstance(iterator, Unwrap) and hasattr(iterator, "group"):
             self.group = iterator.group
         self.preview = Unwrap(iterator)
 
@@ -242,4 +257,8 @@ class Batcher(PassthroughTransform):
                     return self.group.all()
                 raise
         return self.group.take(self.size, self.exact)
+
+# https://stackoverflow.com/a/17511341/3476782
+def ceildiv(a: Union[int, float], b: Union[int, float]) -> int:
+    return int(-(a // -b))
 

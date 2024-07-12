@@ -1,5 +1,5 @@
 import numpy as np
-import asyncio
+import asyncio, pathlib
 import torch
 
 from whisper.audio import (
@@ -10,26 +10,23 @@ from whisper.audio import (
     mel_filters,
 )
 
-from utils import Batcher, PathType
-from typing import Optional, Union, BinaryIO, Tuple
-from collections.abc import Coroutine, AsyncIterable, AsyncGenerator, Awaitable
-
-# https://stackoverflow.com/a/17511341/3476782
-def ceildiv(a, b):
-    return -(a // -b)
+from utils import Batcher, PathType, ceildiv
+from typing import Optional, Union, BinaryIO, Tuple, Any
+from collections.abc import Coroutine, AsyncIterable, AsyncIterator, Awaitable
 
 class AudioSink:
     def __init__(self, *, rate: int = SAMPLE_RATE, **kw):
         super().__init__(**kw)
         self.rate = rate
 
-    def read():
+    def read(self):
         raise NotImplementedError
 
-    def write(data):
+    def write(self, data):
         raise NotImplementedError
 
 class ArrayStream(AudioSink):
+    q: asyncio.Queue
     def __init__(
             self, *, device: Optional[Union[str, torch.device]] = None,
             batch: int = 1, n_mels: int = 80, capacity: int = 1_000_000, **kw):
@@ -37,11 +34,13 @@ class ArrayStream(AudioSink):
         self.q = asyncio.Queue(capacity)
         self.finished = asyncio.Event()
         self.device, self.batch, self.n_mels = device, batch, n_mels
-        self.kw = {"dtype": torch.float32, "device": self.device}
-        self.sees = torch.zeros((0,), **self.kw)
-        self.spectogram = torch.zeros((n_mels, 0), **self.kw)
+        self.sees = self.zeros((0,))
+        self.spectogram = self.zeros((n_mels, 0))
         self.hann = torch.hann_window(N_FFT).to(self.sees.device)
         self.filters = mel_filters(self.sees.device, n_mels)
+
+    def zeros(self, shape):
+        return torch.zeros(shape, dtype=torch.float32, device=self.device)
 
     write_blockable: bool = True
     def write(self, data: bytes) -> Optional[Coroutine]:
@@ -49,17 +48,18 @@ class ArrayStream(AudioSink):
             return self.q.put(data)
         else:
             self.q.put_nowait(data)
+            return None
 
     def load(self, data: bytes) -> np.ndarray:
         return np.frombuffer(
                 data, np.int16).flatten().astype(np.float32) / 32768.0
 
-    async def loader(self, iterator: AsyncIterable[np.ndarray]) -> \
-            AsyncGenerator[np.ndarray]:
+    async def loader(self, iterator: AsyncIterable[bytes]) -> \
+            AsyncIterator[np.ndarray]:
         async for data in iterator:
             yield self.load(data)
 
-    async def buffer(self) -> AsyncGenerator[bytes]:
+    async def buffer(self) -> AsyncIterator[bytes]:
         waiter = asyncio.create_task(self.finished.wait())
         while not self.finished.is_set():
             getter = asyncio.create_task(self.q.get())
@@ -70,7 +70,7 @@ class ArrayStream(AudioSink):
         while not self.q.empty():
             yield self.q.get_nowait()
 
-    async def buffer_nowait(self) -> AsyncGenerator[bytes]:
+    async def buffer_nowait(self) -> AsyncIterator[bytes]:
         try:
             while True:
                 yield self.q.get_nowait()
@@ -79,19 +79,19 @@ class ArrayStream(AudioSink):
 
     loading: Optional[Batcher] = None
     async def fft_offset(self, iterator: AsyncIterable[bytes]) -> \
-            AsyncGenerator[np.ndarray]:
+            AsyncIterator[np.ndarray]:
         init = self.loader(iterator) if self.loading is None else self.loading
         self.loading = Batcher(init, HOP_LENGTH)
-        iterator = aiter(self.loading)
+        _iterator = aiter(self.loading)
         window = np.zeros((0,), dtype=np.float32)
         while window.size < ceildiv(N_FFT, 2):
             try:
-                window = np.concatenate((window, await anext(iterator)))
+                window = np.concatenate((window, await anext(_iterator)))
             except StopAsyncIteration:
                 return
         window = np.pad(window, (N_FFT // 2, 0), 'reflect')
         yield window
-        async for data in iterator:
+        async for data in _iterator:
             yield data
         # for _ in range(N_FFT // HOP_LENGTH):
         #     yield np.zeros((HOP_LENGTH,), dtype=np.float32)
@@ -101,21 +101,21 @@ class ArrayStream(AudioSink):
         hopped = ((sees.shape[0] - N_FFT) // HOP_LENGTH + 1) * HOP_LENGTH
         return sees[hopped:]
 
-    async def window(self, iterator: AsyncIterable[np.ndarray]) -> \
-            AsyncGenerator[torch.Tensor]:
-        iterator = self.fft_offset(iterator)
-        async for data in iterator:
-            data = torch.from_numpy(data)
+    async def window(self, iterator: AsyncIterable[bytes]) -> \
+            AsyncIterator[torch.Tensor]:
+        _iterator = self.fft_offset(iterator)
+        async for data in _iterator:
+            _data = torch.from_numpy(data)
             prev = self.sees.shape[0] - N_FFT
-            while (data.shape[0] + prev) // HOP_LENGTH < self.batch - 1:
+            while (_data.shape[0] + prev) // HOP_LENGTH < self.batch - 1:
                 try:
-                    adding = torch.from_numpy(await anext(iterator))
+                    adding = torch.from_numpy(await anext(_iterator))
                 except StopAsyncIteration:
                     break
-                data = torch.cat((data, adding))
+                _data = torch.cat((_data, adding))
             if self.device is not None:
-                data.to(self.device)
-            res = torch.cat((self.sees, data))
+                _data.to(self.device)
+            res = torch.cat((self.sees, _data))
             self.sees = self.seeing(res)
             yield self.transform(self.dft(res))
 
@@ -147,13 +147,13 @@ class ArrayStream(AudioSink):
         dft_pad = self.dft_pad if dft_pad is None else dft_pad
         if dft_pad:
             overrun = (ceildiv(N_FFT, HOP_LENGTH) - 1) * HOP_LENGTH
-            spectogram = torch.cat((self.sees, torch.zeros(overrun, **self.kw)))
+            spectogram = torch.cat((self.sees, self.zeros(overrun)))
             if spectogram.shape[-1] >= N_FFT:
                 spectogram = self.transform(self.dft(spectogram))
         else:
             spectogram = torch.zeros(0)
         padding = self.padding(self.spectogram.shape[-1] + spectogram.shape[-1])
-        pad = torch.zeros(self.n_mels, max(0, padding), **self.kw)
+        pad = self.zeros((self.n_mels, max(0, padding)))
         spectogram = torch.cat((self.spectogram, spectogram, pad), -1)
         return spectogram if padding >= 0 else spectogram[-padding:]
 
@@ -171,7 +171,7 @@ class ArrayStream(AudioSink):
 
     staging: Optional[Batcher] = None
     async def _push(self, sec: float, exact: bool = False) -> \
-            AsyncGenerator[torch.Tensor]:
+            AsyncIterator[torch.Tensor]:
         batching = int(sec * SAMPLE_RATE // HOP_LENGTH)
         init = self.window(self.buffer()) if self.staging is None \
                 else self.staging
@@ -190,18 +190,20 @@ class ArrayStream(AudioSink):
             self.reader = asyncio.create_task(self.read(**kw))
 
     async def push(self, sec: float, exact: bool=False, **kw) -> \
-            AsyncGenerator[torch.Tensor]:
+            AsyncIterator[torch.Tensor]:
         self.start(**kw)
         async for i in self._push(sec, exact):
             yield i
+        assert self.reader is not None
         await self.reader
 
     async def request(self, sec: float, exact: bool=True, **kw) -> torch.Tensor:
         try:
             return await anext(self.push(sec, exact))
         except StopAsyncIteration:
-            await self.reader
-            return torch.zeros((self.n_mels, 0), dtype=torch.float32)
+            if self.reader is not None:
+                await self.reader
+            return self.zeros((self.n_mels, 0))
 
     async def full(self, **kw) -> torch.Tensor:
         await self.read(**kw)
@@ -215,6 +217,7 @@ class ArrayStream(AudioSink):
         res = []
         async for data in self.loader(self.buffer()):
             res.append(data)
+        assert self.reader is not None
         await self.reader
         return np.concatenate(res)
 
@@ -234,7 +237,9 @@ class RawAudioFile(ArrayStream):
         fp = open(self.fname, 'rb') if self.fp is None else self.fp
         data = fp.read(self.period)
         while len(data) != 0:
-            await self.write(data)
+            io_hold = self.write(data)
+            assert io_hold is not None and self.write_blockable is True
+            await io_hold
             data = fp.read(self.period)
         self.finished.set()
 
@@ -277,15 +282,15 @@ class AudioFileSequence(AudioFile):
     def __init__(self, *, seq: SeqType = '*.wav', **kw):
         global glob
         import glob
-        super().__init__(fname=None, **kw)
-        seq = (seq,) if isinstance(seq, PathType) else seq
-        self.seq = tuple(j for i in seq for j in glob.glob(i))
+        super().__init__(fname="", **kw)
+        _seq = (seq,) if isinstance(seq, (str, pathlib.Path)) else seq
+        self.seq = tuple(j for i in _seq for j in glob.glob(str(i)))
         self.idx = 0
 
     def clear(self) -> None:
         self.finished.clear()
 
-    def read(self) -> Coroutine[None]:
+    def read(self) -> Coroutine[Any, Any, None]:
         async def inner():
             if self.idx >= len(self.seq):
                 raise SequenceDone
@@ -335,11 +340,11 @@ class LiveCapture(ArrayStream):
     async def read(self, length: Optional[float] = None) -> None:
         if length is None:
             await self.busy_loop()
-        try:
-            async with asyncio.timeout(length):
-                await self.busy_loop()
-        except TimeoutError:
-            self.finished.set()
+        else:
+            try:
+                await asyncio.wait_for(self.busy_loop(), length)
+            except TimeoutError:
+                self.finished.set()
 
     def blocking(self, length: Optional[float] = None) -> None:
         asyncio.run(self.read(length))

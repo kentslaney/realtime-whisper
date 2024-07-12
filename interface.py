@@ -3,8 +3,8 @@ from transcribe import Transcriber
 from utils import PassthroughProperty, PathType
 from audio import LiveCapture, AudioFileStitch, Recorder, ArrayStream
 from whisper.audio import CHUNK_LENGTH, FRAMES_PER_SECOND
-from typing import Generic, TypeVar, Callable, List
-from collections.abc import AsyncGenerator
+from typing import Generic, TypeVar, Callable, List, Union, Tuple
+from collections.abc import AsyncIterator
 
 def hms(sec: float) -> str:
     trim = sec < 3600
@@ -27,8 +27,8 @@ class WatchJoin(Generic[T], metaclass=PassthroughProperty.defaults):
 
     skipped: int = 0
     scrollback: int = 0
-    @PassthroughProperty(()).setter
-    def written(self, value: List[T]):
+    @PassthroughProperty[Union[List[T], Tuple]](()).setter
+    def written(self, value: Union[List[T], Tuple]) -> None:
         self._written = value[-self.buffer:]
         self.skipped = max(0, len(value) - self.buffer)
 
@@ -82,7 +82,7 @@ class MinimalTranscriber(Transcriber):
 
 class AudioTranscriber(Transcriber):
     async def loop(self, stream: ArrayStream, sec: float, **kw) -> \
-            AsyncGenerator[List[dict]]:
+            AsyncIterator[dict]:
         async for data in stream.push(sec, **kw):
             self.restore(stream.offset)
             yield self(data, stream.offset, True)
@@ -93,7 +93,7 @@ class AudioTranscriber(Transcriber):
     def repr(self, segment: dict) -> str:
         return self.gutter(segment) + "    " + segment["text"]
 
-    streamer: ArrayStream = LiveCapture
+    streamer: type[ArrayStream] = LiveCapture
     def stdout(self, sec: float = 1., exact: bool = False, **kw) -> None:
         kw["n_mels"] = self.model.dims.n_mels
         stream, printer = self.streamer(**kw), WatchJoin(self.repr)
@@ -109,8 +109,8 @@ class RecorderTranscriber(AudioTranscriber):
         import json
         self.fname = fname
 
-    streamer: ArrayStream = Recorder
-    async def loop(self, *a, **kw) -> AsyncGenerator[List[dict]]:
+    streamer: type[ArrayStream] = Recorder
+    async def loop(self, *a, **kw) -> AsyncIterator[dict]:
         async for data in super().loop(*a, **kw):
             with open(self.fname, 'w') as fp:
                 json.dump(data, fp)
