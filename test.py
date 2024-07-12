@@ -162,10 +162,11 @@ def minimal_test(seq=test_files):
     from whisper.audio import log_mel_spectrogram
     amps = stream().all_amplitudes()
     mel_original = log_mel_spectrogram(amps)
-    original = transcriber(mel_original)
+    # original = transcriber(mel_original)
+    original = transcriber()
     original.all_segments = transcribe(original.model, amps)['segments']
 
-    breakpoint()
+    return minimal, polyfill, original
 
 def mel_test(seq=test_files, check_amp=False):
     from whisper.audio import log_mel_spectrogram
@@ -174,10 +175,10 @@ def mel_test(seq=test_files, check_amp=False):
     polyfill = stream().sequential()[:, :-N_FRAMES]
     if isinstance(seq, str) and "*" not in seq and check_amp:
         assert torch.all(original == log_mel_spectrogram(seq))
-    breakpoint()
+    return polyfill, original
 
 if __name__ == "__main__":
     torch.set_printoptions(edgeitems=8, linewidth=200)
     np.set_printoptions(edgeitems=8, linewidth=200)
-    print(*minimal_test(), sep="\n")
+    print(*minimal_test(), sep="\n\n")
 

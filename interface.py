@@ -1,10 +1,12 @@
 import asyncio, os, sys
 from transcribe import Transcriber
-from utils import PassthroughProperty
-from audio import LiveCapture, AudioFileStitch, Recorder
+from utils import PassthroughProperty, PathType
+from audio import LiveCapture, AudioFileStitch, Recorder, ArrayStream
 from whisper.audio import CHUNK_LENGTH, FRAMES_PER_SECOND
+from typing import Generic, TypeVar, Callable, List
+from collections.abc import AsyncGenerator
 
-def hms(sec):
+def hms(sec: float) -> str:
     trim = sec < 3600
     h = "" if trim else str(int(sec) // 3600) + ":"
     m_fill = " " if trim else "0"
@@ -13,21 +15,25 @@ def hms(sec):
     c = str(round((sec % 1) * 100)).rjust(2, '0')
     return h + m + s + c
 
-def tod(seconds):
+def tod(seconds: float) -> str:
     return time.strftime("%H:%M:%S", time.localtime(seconds))
 
-class WatchJoin(metaclass=PassthroughProperty.defaults):
-    def __init__(self, transform=repr, buffer=1_000):
+T = TypeVar("T")
+
+class WatchJoin(Generic[T], metaclass=PassthroughProperty.defaults):
+    def __init__(
+            self, transform: Callable[[T], str] = repr, buffer: int = 1_000):
         self.transform, self.buffer = transform, buffer
 
-    skipped, scrollback = 0, 0
+    skipped: int = 0
+    scrollback: int = 0
     @PassthroughProperty(()).setter
-    def written(self, value):
+    def written(self, value: List[T]):
         self._written = value[-self.buffer:]
         self.skipped = max(0, len(value) - self.buffer)
 
     @staticmethod
-    def clear_line():
+    def clear_line() -> None:
         if os.name == 'nt': # Windows
             print("\r" + chr(27) + "[2K", end="") #]
         else:
@@ -37,7 +43,7 @@ class WatchJoin(metaclass=PassthroughProperty.defaults):
     def backtrack():
         print("\033[F", end="") #]
 
-    def __call__(self, value):
+    def __call__(self, value: List[T]) -> None:
         if len(value) < self.skipped:
             raise Exception()
         update = []
@@ -63,8 +69,9 @@ class WatchJoin(metaclass=PassthroughProperty.defaults):
         sys.stdout.flush()
 
 class MinimalTranscriber(Transcriber):
-    exact, chlen = True, CHUNK_LENGTH
-    async def loop(self, stream, **kw):
+    exact: bool = True
+    chlen: float = CHUNK_LENGTH
+    async def loop(self, stream: ArrayStream, **kw) -> List[dict]:
         data = await stream.request(self.chlen, self.exact)
         while data.shape[-1] > 0:
             self(data, stream.offset, True)
@@ -74,19 +81,20 @@ class MinimalTranscriber(Transcriber):
         return self.all_segments
 
 class AudioTranscriber(Transcriber):
-    async def loop(self, stream, sec, **kw):
+    async def loop(self, stream: ArrayStream, sec: float, **kw) -> \
+            AsyncGenerator[List[dict]]:
         async for data in stream.push(sec, **kw):
             self.restore(stream.offset)
             yield self(data, stream.offset, True)
 
-    def gutter(self, segment):
+    def gutter(self, segment: dict) -> str:
         return str(segment["id"]).rjust(4) + "  " + hms(segment["start"])
 
-    def repr(self, segment):
+    def repr(self, segment: dict) -> str:
         return self.gutter(segment) + "    " + segment["text"]
 
-    streamer = LiveCapture
-    def stdout(self, sec=1, exact=False, **kw):
+    streamer: ArrayStream = LiveCapture
+    def stdout(self, sec: float = 1., exact: bool = False, **kw) -> None:
         kw["n_mels"] = self.model.dims.n_mels
         stream, printer = self.streamer(**kw), WatchJoin(self.repr)
         async def inner():
@@ -96,13 +104,13 @@ class AudioTranscriber(Transcriber):
         asyncio.run(inner())
 
 class RecorderTranscriber(AudioTranscriber):
-    def __init__(self, *a, fname='out.json', **kw):
+    def __init__(self, *a, fname: PathType = 'out.json', **kw):
         global json
         import json
         self.fname = fname
 
-    streamer = Recorder
-    async def loop(self, *a, **kw):
+    streamer: ArrayStream = Recorder
+    async def loop(self, *a, **kw) -> AsyncGenerator[List[dict]]:
         async for data in super().loop(*a, **kw):
             with open(self.fname, 'w') as fp:
                 json.dump(data, fp)
@@ -115,7 +123,7 @@ class ToDTranscriber(AudioTranscriber):
         self.initial = time.time()
         super().__init__(*a, **kw)
 
-    def gutter(self, segment):
+    def gutter(self, segment: dict) -> str:
         return str(segment["id"]).rjust(4) + "  " + tod(
                 self.initial + segment["start"])
 

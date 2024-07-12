@@ -1,18 +1,23 @@
-import collections, torch
+import collections, torch, pathlib
 import numpy as np
+from collections.abc import Callable
+from typing import Any, Optional, Generic, TypeVar, Union
+
+PathType = Union[str, pathlib.Path]
+T = TypeVar("T")
 
 # boilerplate for property with _{name} storage and passthrough getter/setter
-class PassthroughProperty:
-    def __init__(self, default):
+class PassthroughProperty(Generic[T]):
+    def __init__(self, default: T):
         self.value = default
 
-    f = None
-    def setter(self, f):
+    f: Optional[Callable[[T], None]] = None
+    def setter(self, f: Callable[[T], None]):
         self.f = f
         return self
 
-    g = None
-    def property(self, g):
+    g: Optional[property] = None
+    def property(self, g: Callable[[], T]):
         self.g = property(g)
         return self
 

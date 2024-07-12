@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 class InMemoryAudio(AudioFile):
     dft_pad = True
 
-def audio_tensor(audio):
+def audio_tensor(audio: Union[str, np.ndarray, torch.Tensor]) -> torch.Tensor:
     if isinstance(audio, str):
         return InMemoryAudio(fname=audio).sequential()
     if isinstance(audio, np.dtype):

@@ -1,5 +1,6 @@
+from dataclasses import dataclass
 from collections import namedtuple
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, List, Optional, Tuple, Union, Dict
 import numpy as np
 import torch, warnings
 
@@ -13,7 +14,8 @@ from whisper.audio import (
 )
 from whisper.decoding import DecodingOptions, DecodingResult
 from whisper.timing import add_word_timestamps
-from whisper.tokenizer import LANGUAGES, TO_LANGUAGE_CODE, get_tokenizer
+from whisper.tokenizer import (
+        LANGUAGES, TO_LANGUAGE_CODE, get_tokenizer, Tokenizer)
 from whisper.utils import (
     exact_div,
     format_timestamp,
@@ -26,45 +28,48 @@ from utils import PassthroughProperty
 if TYPE_CHECKING:
     from whisper.model import Whisper
 
-class Hypothesis:
-    def __init__(self, language, since, evidence, last):
-        self.language, self.since = language, since
-        self.evidence, self.last = evidence, last
+@dataclass
+class LanguageHypothesis:
+    language: Optional[str] = None
+    since: int = 0
+    evidence: int = 0
+    last: int = -1
 
 # mostly 1:1 with whisper.transcribe; repeated because of scope interface issues
 class Transcriber(metaclass=PassthroughProperty.defaults):
-    prefix = '''"'\u201c\u00bf([{-'''
-    postfix = '''"'.\u3002,\uff0c!\uff01?\uff1f:\uff1a\u201d)]}\u3001'''
-    punctuation = prefix + postfix
+    prefix: str = '''"'\u201c\u00bf([{-'''
+    postfix: str = '''"'.\u3002,\uff0c!\uff01?\uff1f:\uff1a\u201d)]}\u3001'''
+    punctuation: str = prefix + postfix
 
-    verbose = False
+    verbose: bool = False
 
-    _decode_options, decode_props = {}, ("fp16", "language", "task")
+    _decode_options: dict = {}
+    decode_props: Tuple[str] = ("fp16", "language", "task")
     @property
-    def decode_options(self):
+    def decode_options(self) -> dict:
         for k in self.decode_props:
             self._decode_options[k] = getattr(self, k)
         return self._decode_options
 
     @decode_options.setter
-    def decode_options(self, value):
+    def decode_options(self, value: dict) -> None:
         self._decode_options = value
         for k in self.decode_props:
             if k in value:
                 setattr(self, k, value[k])
 
-    dtype = torch.float16
+    dtype: torch.dtype = torch.float16
     @property
-    def fp16(self):
+    def fp16(self) -> bool:
         return self.dtype == torch.float16
 
     @fp16.setter
-    def fp16(self, value):
+    def fp16(self, value: bool) -> None:
         self.dtype = torch.float16 if value else torch.float32
         self.fp16device()
 
     @PassthroughProperty(None).setter
-    def model(self, value):
+    def model(self, value: "Whisper") -> None:
         self._model = value
         self.device = value.device
         self.input_stride = exact_div(
@@ -75,7 +80,7 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
         )  # time per output token: 0.02 (seconds)
 
     @PassthroughProperty(None).setter
-    def device(self, value):
+    def device(self, value: torch.device) -> None:
         self._device = value
         if value == torch.device("cpu"):
             if torch.cuda.is_available():
@@ -83,26 +88,26 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
                         "Performing inference on CPU when CUDA is available")
             self.fp16device()
 
-    def fp16device(self):
+    def fp16device(self) -> None:
         if self.device == torch.device("cpu") and self.dtype == torch.float16:
             warnings.warn("FP16 is not supported on CPU; using FP32 instead")
             self.dtype = torch.float32
 
-    def detect_language(self, mel=None):
+    def detect_language(self, mel: Optional[torch.Tensor] = None) -> str:
         mel_segment = pad_or_trim(self.latest if mel is None else mel, N_FRAMES)
         mel_segment = mel_segment.to(self.device).to(self.dtype)
         _, probs = self.model.detect_language(mel_segment)
         return max(probs, key=probs.get)
 
-    prev = None
+    prev: Optional[torch.Tensor] = None
     @PassthroughProperty(None).setter
-    def latest(self, value):
+    def latest(self, value: torch.Tensor) -> None:
         self.prev = self._latest
         self._latest = value
 
-    _hypothesis = Hypothesis(None, 0, 0, -1)
+    _hypothesis: LanguageHypothesis = LanguageHypothesis()
     @PassthroughProperty(None).property
-    def language(self):
+    def language(self) -> Optional[str]:
         if self._language is not None:
             return self._language
         if not self.model.is_multilingual:
@@ -131,7 +136,7 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
         self._hypothesis.evidence = 1
 
     @PassthroughProperty((0,)).setter
-    def clip_timestamps(self, value):
+    def clip_timestamps(self, value: Union[str, List[float]]):
         self._seek_clips = None
         if isinstance(value, str):
             self._clip_timestamps = tuple(map(float, value.split(","))) \
@@ -139,7 +144,7 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
         else:
             self._clip_timestamps = tuple(value) or (0,)
 
-    _seek_clips = None
+    _seek_clips: List[Tuple[int, Optional[int]]] = None
     @property
     def seek_clips(self) -> List[Tuple[int, Optional[int]]]:
         if self._seek_clips is None:
@@ -150,11 +155,11 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
         return self._seek_clips
 
     @PassthroughProperty(None).property
-    def seek(self):
+    def seek(self) -> Optional[int]:
         return self.seek_clips[0][0] if self._seek is None else self._seek
 
     @PassthroughProperty(0).setter
-    def clip_idx(self, value):
+    def clip_idx(self, value: int):
         self._clip_idx = value
         clips = self.seek_clips
         if value < len(clips):
@@ -166,12 +171,12 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
             (self.seek + N_FRAMES) * HOP_LENGTH / SAMPLE_RATE))
 
     @PassthroughProperty((0.0, 0.2, 0.4, 0.6, 0.8, 1.0)).setter
-    def temperature(self, value):
+    def temperature(self, value: Union[Optional[float], Tuple[float, ...]]):
         self._temperature = (value,) if isinstance(value, (int, float)) else (
                 __class__._temperature if value is None else value)
 
     @PassthroughProperty("transcribe").setter
-    def task(self, value):
+    def task(self, value: str):
         self._task = value
         if self.word_timestamps and value == "translate":
             warnings.warn(
@@ -179,15 +184,15 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
                     "reliable.")
 
     @PassthroughProperty(False).setter
-    def word_timestamps(self, value):
+    def word_timestamps(self, value: bool):
         self._word_timestamps = value
         self.task = self.task
 
     get_tokenizer = staticmethod(get_tokenizer)
-    _tokenizer = None
-    _tokenizer_cache = {}
+    _tokenizer: Optional[Tokenizer] = None
+    _tokenizer_cache: Dict[str, Tokenizer] = {}
     @property
-    def tokenizer(self):
+    def tokenizer(self) -> Optional[Tokenizer]:
         if self._tokenizer is None:
             lang = self.language
             if self._language is not None:
@@ -213,10 +218,10 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
             return self._tokenizer_cache[lang]
         return self._tokenizer
 
-    _initial_prompt_tokens = None
-    _initial_prompt_cache = {}
+    _initial_prompt_tokens: Optional[List[int]] = None
+    _initial_prompt_cache: Dict[Tokenizer, List[int]] = {}
     @property
-    def initial_prompt_tokens(self):
+    def initial_prompt_tokens(self) -> List[int]:
         if self._initial_prompt_tokens is None:
             if self.initial_prompt is None:
                 self._initial_prompt_tokens = []
@@ -233,6 +238,9 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
                 return self._initial_prompt_cache[tokenizer]
         return self._initial_prompt_tokens
 
+    prompt_reset_since: int = 0
+    last_speech_timestamp: float = 0.0
+    frame_offset: int = 0
     def __init__(
             self,
             model: "Whisper",
@@ -267,9 +275,6 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
 
         self.all_tokens = self.initial_prompt_tokens[:]
         self.all_segments = []
-        self.prompt_reset_since = 0
-        self.last_speech_timestamp = 0.0
-        self.frame_offset = 0
 
     def decode_with_fallback(self, segment: torch.Tensor) -> DecodingResult:
         decode_result = None
@@ -301,7 +306,7 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
 
     def new_segment(
             self, *, start: float, end: float, tokens: torch.Tensor,
-            result: DecodingResult):
+            result: DecodingResult) -> dict:
         tokens = tokens.tolist()
         text_tokens = [token for token in tokens if token < self.tokenizer.eot]
         return {
@@ -344,8 +349,9 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
         return next((s for s in segments if s["words"]), None)
 
     def reseek(
-            self, current_segments, segment_size, single_timestamp_ending,
-            tokens, timestamp_tokens, result):
+            self, current_segments: List[dict], segment_size: int,
+            single_timestamp_ending: bool, tokens: torch.Tensor,
+            timestamp_tokens: torch.Tensor, result: DecodingResult):
         consecutive = torch.where(
                 timestamp_tokens[:-1] & timestamp_tokens[1:])[0]
         consecutive.add_(1)
@@ -406,8 +412,9 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
             self.seek += segment_size
 
     def timestamp(
-            self, current_segments, segment_size, single_timestamp_ending,
-            mel_segment, previous_seek):
+            self, current_segments: List[dict], segment_size: int,
+            single_timestamp_ending: bool, mel_segment: torch.Tensor,
+            previous_seek: int) -> bool:
         add_word_timestamps(
             segments=current_segments,
             model=self.model,
@@ -493,7 +500,9 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
                 if last_word_end is not None:
                     self.last_speech_timestamp = last_word_end
 
-    def __call__(self, mel, offset=0, single_pass=False):
+    def __call__(
+            self, mel: torch.Tensor, offset: int = 0,
+            single_pass: bool = False) -> dict:
         self.latest, self.frame_offset = mel, offset
         content_frames = mel.shape[-1] - N_FRAMES + offset
         content_duration = float(content_frames * HOP_LENGTH / SAMPLE_RATE)
@@ -592,7 +601,7 @@ class Transcriber(metaclass=PassthroughProperty.defaults):
         self.latest = None
         return res
 
-    def restore(self, offset):
+    def restore(self, offset: int):
         processing, seconds = 0, offset * HOP_LENGTH / SAMPLE_RATE
         while len(self.all_segments) > 0 and (
                 self.all_segments[-1]["start"] >= seconds
