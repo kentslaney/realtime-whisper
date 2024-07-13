@@ -21,8 +21,8 @@ class PassthroughProperty(Generic[T]):
         self.g = property(g)
         return self
 
-    @staticmethod
-    def defaults(clsname, bases, attrs):
+class PassthroughPropertyDefaults(type):
+    def __new__(cls, clsname, bases, attrs):
         def closure(f, v):
             def prop(self):
                 return getattr(self, v)
@@ -39,7 +39,7 @@ class PassthroughProperty(Generic[T]):
             updates[private] = v.value
             getter, setter = closure(k, private)
             updates[k] = (v.g or getter).setter(v.f or setter)
-        return type(clsname, bases, {**attrs, **updates})
+        return super().__new__(cls, clsname, bases, {**attrs, **updates})
 
 A = TypeVar("A", bound=Union[np.ndarray, torch.Tensor])
 

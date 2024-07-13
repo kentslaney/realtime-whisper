@@ -23,7 +23,7 @@ from whisper.utils import (
     make_safe,
 )
 
-from utils import PassthroughProperty
+from utils import PassthroughProperty, PassthroughPropertyDefaults
 
 if TYPE_CHECKING:
     from whisper.model import Whisper
@@ -36,7 +36,7 @@ class LanguageHypothesis:
     last: int = -1
 
 # mostly 1:1 with whisper.transcribe; repeated because of scope interface issues
-class Transcriber(metaclass=PassthroughProperty.defaults):
+class Transcriber(metaclass=PassthroughPropertyDefaults):
     prefix: str = '''"'\u201c\u00bf([{-'''
     postfix: str = '''"'.\u3002,\uff0c!\uff01?\uff1f:\uff1a\u201d)]}\u3001'''
     punctuation: str = prefix + postfix

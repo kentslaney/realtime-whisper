@@ -74,7 +74,6 @@ class TranscriberTest(Transcriber):
             "num_languages": None,
             "device": torch.device("cpu")
         })()
-    latest = None
     _seek = 0
 
     def __init__(self, seq):
@@ -154,7 +153,7 @@ def minimal_test(seq=test_files):
         return res
 
     minimal = transcriber()
-    asyncio.run(minimal.loop(stream()))
+    asyncio.run(minimal.process(stream()))
 
     polyfill = transcriber()
     polyfill(mel)

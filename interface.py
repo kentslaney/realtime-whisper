@@ -1,6 +1,6 @@
-import asyncio, os, sys
+import asyncio, os, sys, time, json
 from transcribe import Transcriber
-from utils import PassthroughProperty, PathType
+from utils import PassthroughProperty, PassthroughPropertyDefaults, PathType
 from audio import LiveCapture, AudioFileStitch, Recorder, ArrayStream
 from whisper.audio import CHUNK_LENGTH, FRAMES_PER_SECOND
 from typing import Generic, TypeVar, Callable, List, Union, Tuple
@@ -20,7 +20,7 @@ def tod(seconds: float) -> str:
 
 T = TypeVar("T")
 
-class WatchJoin(Generic[T], metaclass=PassthroughProperty.defaults):
+class WatchJoin(Generic[T], metaclass=PassthroughPropertyDefaults):
     def __init__(
             self, transform: Callable[[T], str] = repr, buffer: int = 1_000):
         self.transform, self.buffer = transform, buffer
@@ -71,7 +71,7 @@ class WatchJoin(Generic[T], metaclass=PassthroughProperty.defaults):
 class MinimalTranscriber(Transcriber):
     exact: bool = True
     chlen: float = CHUNK_LENGTH
-    async def loop(self, stream: ArrayStream, **kw) -> List[dict]:
+    async def process(self, stream: ArrayStream, **kw) -> List[dict]:
         data = await stream.request(self.chlen, self.exact)
         while data.shape[-1] > 0:
             self(data, stream.offset, True)
@@ -105,8 +105,6 @@ class AudioTranscriber(Transcriber):
 
 class RecorderTranscriber(AudioTranscriber):
     def __init__(self, *a, fname: PathType = 'out.json', **kw):
-        global json
-        import json
         self.fname = fname
 
     streamer: type[ArrayStream] = Recorder
@@ -118,8 +116,6 @@ class RecorderTranscriber(AudioTranscriber):
 
 class ToDTranscriber(AudioTranscriber):
     def __init__(self, *a, **kw):
-        global time
-        import time
         self.initial = time.time()
         super().__init__(*a, **kw)
 

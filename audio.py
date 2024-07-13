@@ -1,6 +1,5 @@
 import numpy as np
-import asyncio, pathlib
-import torch
+import asyncio, pathlib, subprocess, torch
 
 from whisper.audio import (
     SAMPLE_RATE,
@@ -11,7 +10,7 @@ from whisper.audio import (
 )
 
 from utils import Batcher, PathType, ceildiv
-from typing import Optional, Union, BinaryIO, Tuple, Any
+from typing import Optional, Union, IO, Tuple, Any
 from collections.abc import Coroutine, AsyncIterable, AsyncIterator, Awaitable
 
 class AudioSink:
@@ -232,7 +231,7 @@ class RawAudioFile(ArrayStream):
         self.fname = fname
         self.period = period
 
-    fp: Optional[BinaryIO] = None
+    fp: Optional[IO[bytes]] = None
     async def read(self) -> None:
         fp = open(self.fname, 'rb') if self.fp is None else self.fp
         data = fp.read(self.period)
@@ -247,8 +246,6 @@ class AudioFile(RawAudioFile):
     def __init__(
             self, *, period: int = SAMPLE_RATE, fname: PathType = 'out.wav',
             **kw):
-        global subprocess
-        import subprocess
         assert not subprocess.run(
                 ["which", "ffmpeg"], stdout=subprocess.PIPE).returncode
         super().__init__(period=period or -1, fname=fname, **kw)
@@ -305,7 +302,7 @@ class AudioFileStitch(ArrayStream):
             self, *, seq: SeqType = "*.wav", period: int = SAMPLE_RATE, **kw):
         super().__init__(**kw)
         self.seq = AudioFileSequence(seq=seq, period=period, **kw)
-        self.seq.write = self.write
+        self.seq.q = self.q
 
     async def read(self) -> None:
         try:
