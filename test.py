@@ -43,8 +43,8 @@ class LenTest(AudioFile):
 
 class Test(AudioFileStitch):
     def __init__(self, **kw):
-        global plt
-        import matplotlib.pyplot as plt
+        # global plt
+        # import matplotlib.pyplot as plt
         super().__init__(**kw)
 
     def padding(self, content_frames):
@@ -52,8 +52,8 @@ class Test(AudioFileStitch):
 
     async def test(self):
         out = await self.full()
-        plt.imshow(out)
-        plt.show()
+        # plt.imshow(out)
+        # plt.show()
 
     def __call__(self):
         asyncio.run(self.test())

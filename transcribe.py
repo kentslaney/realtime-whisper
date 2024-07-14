@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from collections import namedtuple
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union, Dict
 import numpy as np
 import torch, warnings
