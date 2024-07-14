@@ -176,8 +176,13 @@ def mel_test(seq=test_files, check_amp=False):
         assert torch.all(original == log_mel_spectrogram(seq))
     return polyfill, original
 
+class ReadableProgress(ProgressTranscriber, ReadableMinimal):
+    pass
+
 if __name__ == "__main__":
-    torch.set_printoptions(edgeitems=8, linewidth=200)
-    np.set_printoptions(edgeitems=8, linewidth=200)
-    print(*minimal_test(), sep="\n\n")
+    from whisper import load_model
+    import sys
+    transcriber = ReadableProgress(load_model("base.en"), verbose=False)
+    asyncio.run(transcriber.progressive(AudioFile(fname=sys.argv[1])))
+    print(transcriber)
 

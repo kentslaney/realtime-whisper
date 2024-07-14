@@ -1,4 +1,4 @@
-from transcribe import Transcriber
+from interface import ProgressTranscriber
 from audio import AudioFile
 from typing import TYPE_CHECKING, Union
 from whisper import load_model
@@ -22,7 +22,7 @@ def transcribe(
         model: "Whisper",
         audio: Union[str, np.ndarray, torch.Tensor],
         **kw):
-    return Transcriber(model, **kw)(audio_tensor(audio))
+    return ProgressTranscriber(model, **kw)(audio_tensor(audio))
 
 if __name__ == "__main__":
     # import sys

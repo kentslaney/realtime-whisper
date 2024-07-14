@@ -40,7 +40,7 @@ class Transcriber(metaclass=PassthroughPropertyDefaults):
     postfix: str = '''"'.\u3002,\uff0c!\uff01?\uff1f:\uff1a\u201d)]}\u3001'''
     punctuation: str = prefix + postfix
 
-    verbose: bool = False
+    verbose: Optional[bool] = None
 
     _decode_options: dict = {}
     decode_props: Tuple[str, ...] = ("fp16", "language", "task")
@@ -266,8 +266,7 @@ class Transcriber(metaclass=PassthroughPropertyDefaults):
             hallucination_silence_threshold: Optional[float] = None,
             **decode_options):
         self.model = model
-        if verbose is not None:
-            self.verbose = verbose
+        self.verbose = verbose
         self.temperature = temperature
         self.compression_ratio_threshold = compression_ratio_threshold
         self.logprob_threshold = logprob_threshold
@@ -606,19 +605,24 @@ class Transcriber(metaclass=PassthroughPropertyDefaults):
                 # do not feed the prompt tokens if a high temperature was used
                 self.prompt_reset_since = len(self.all_tokens)
 
+            self.reporthook()
+
             if single_pass:
                 break
 
         _tokenizer = self.tokenizer
         assert _tokenizer is not None
-        res = dict(
+        self.result = dict(
                 segments=self.all_segments, language=self.language,
                 text=_tokenizer.decode(
                     self.all_tokens[len(self.initial_prompt_tokens):]))
         self.latest = None
-        return res
+        return self.result
 
-    def restore(self, offset: int):
+    def reporthook(self) -> None:
+        pass
+
+    def restore(self, offset: int) -> None:
         processing, seconds = 0, offset * HOP_LENGTH / SAMPLE_RATE
         while len(self.all_segments) > 0 and (
                 self.all_segments[-1]["start"] >= seconds

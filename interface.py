@@ -1,9 +1,9 @@
-import asyncio, os, sys, time, json
+import asyncio, os, sys, time, json, torch
 from transcribe import Transcriber
 from utils import PassthroughProperty, PassthroughPropertyDefaults, PathType
-from audio import LiveCapture, AudioFileStitch, Recorder, ArrayStream
+from audio import LiveCapture, AudioFileStitch, Recorder, ArrayStream, AudioFile
 from whisper.audio import CHUNK_LENGTH, FRAMES_PER_SECOND
-from typing import Generic, TypeVar, Callable, List, Union, Tuple
+from typing import Generic, TypeVar, Callable, List, Union, Tuple, Optional
 from collections.abc import AsyncIterator
 
 def hms(sec: float) -> str:
@@ -71,14 +71,63 @@ class WatchJoin(Generic[T], metaclass=PassthroughPropertyDefaults):
 class MinimalTranscriber(Transcriber):
     exact: bool = True
     chlen: float = CHUNK_LENGTH
-    async def process(self, stream: ArrayStream, **kw) -> List[dict]:
+    async def process(self, stream: ArrayStream, **kw) -> dict:
         data = await stream.request(self.chlen, self.exact)
         while data.shape[-1] > 0:
             self(data, stream.offset, True)
             t = self.chlen - (stream.offset + data.shape[-1] - self.seek) \
                     / FRAMES_PER_SECOND + CHUNK_LENGTH
             data = await stream.request(t, self.exact)
-        return self.all_segments
+        return self.result
+
+class ProgressTranscriber(MinimalTranscriber):
+    def __init__(self, *a, duration: Optional[float] = None, **kw):
+        global tqdm
+        import tqdm
+        super().__init__(*a, **kw)
+        self.duration, self.progress = duration, 0
+
+
+    def __call__(self, *a, **kw) -> dict:
+        if self._pbar is None:
+            try:
+                return super().__call__(*a, **kw)
+            finally:
+                self.close()
+        else:
+            return super().__call__(*a, **kw)
+
+    @PassthroughProperty(None).property
+    def pbar(self):
+        if self._pbar is None:
+            n = self.latest.shape[-1] if self.duration is None \
+                    else -int(self.duration * -FRAMES_PER_SECOND)
+            self._pbar = tqdm.tqdm(
+                    total=n, unit="frames", disable=self.verbose is not False)
+            self._pbar.__enter__()
+        return self._pbar
+
+    def reporthook(self) -> None:
+        update_to = min(self._seek, self.frame_offset + self.latest.shape[-1])
+        self.pbar.update(update_to - self.progress)
+        self.progress = update_to
+
+    def close(self):
+        self.pbar.__exit__(None, None, None)
+
+    async def process(self, stream: ArrayStream, **kw) -> dict:
+        self.pbar
+        try:
+            return await super().process(stream, **kw)
+        finally:
+            self.close()
+
+    async def progressive(self, stream: AudioFile, **kw) -> dict:
+        self.duration = stream.duration
+        return await self.process(stream, **kw)
+
+    def progressing(self, stream: AudioFile, **kw) -> dict:
+        return asyncio.run(self.progressive(stream, **kw))
 
 class AudioTranscriber(Transcriber):
     async def loop(self, stream: ArrayStream, sec: float, **kw) -> \
