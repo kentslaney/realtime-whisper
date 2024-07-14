@@ -1,5 +1,9 @@
 # Real-Time Whisper
-Currently linux only
+## Installation Notes
+Install `requirements.txt` dependencies via pip. On linux, it will require a
+shared library for ALSA, and on other platforms it will require `PortAudio`.
+Notes on the latter can be found [on the PyAudio website](
+https://people.csail.mit.edu/hubert/pyaudio/#downloads).
 
 ## Usage
 Output live transcription for the default audio source using `base.en` with a 3

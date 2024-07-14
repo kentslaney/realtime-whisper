@@ -1,6 +1,7 @@
 numpy
 torch
 pyalsaaudio; sys_platform == 'linux'
+pyaudio; sys_platform != 'linux'
 matplotlib
 openai-whisper @ git+https://github.com/openai/whisper.git@ba3f3cd
 

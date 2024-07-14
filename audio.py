@@ -10,7 +10,7 @@ from whisper.audio import (
 )
 
 from utils import Batcher, PathType, ceildiv
-from typing import Optional, Union, IO, Tuple, Any
+from typing import Optional, Union, IO, Tuple, Any, Type
 from collections.abc import Coroutine, AsyncIterable, AsyncIterator, Awaitable
 
 class AudioSink:
@@ -311,35 +311,73 @@ class AudioFileStitch(ArrayStream):
         except SequenceDone:
             self.finished.set()
 
-class LiveCapture(ArrayStream):
+class AudioCapture(ArrayStream):
     write_blockable: bool = False
+    async def capture(self) -> None:
+        raise NotImplementedError
+
+linux: bool = False
+try:
+    # ALSA is a more typical setup than PortAudio on Linux
+    import alsaaudio
+    linux = True
+except ImportError:
+    import pyaudio
+
+class ALSACapture(AudioCapture):
     def __init__(
             self, *, period: int = HOP_LENGTH, source: str = 'default',
             loop_delay: float = .001, **kw):
-        global alsaaudio
-        import alsaaudio
         super().__init__(**kw)
-        self.period, self.source, self.loop_delay = period, source, loop_delay
+        self.period, self.source = period, source
+        self.loop_delay = loop_delay
 
     async def busy_loop(self) -> None:
-        inp = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NONBLOCK,
-            channels=1, rate=self.rate, format=alsaaudio.PCM_FORMAT_S16_LE,
-            periodsize=self.period, device=self.source)
+        inp = alsaaudio.PCM(
+                alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NONBLOCK, channels=1,
+                rate=self.rate, format=alsaaudio.PCM_FORMAT_S16_LE,
+                periodsize=self.period, device=self.source)
 
         while True:
             l, data = inp.read()
             if l < 0:
-                raise Exception("capture buffer overrun before write buffer")
+                raise Exception(
+                        "capture buffer overrun before write buffer")
             if l:
                 self.write(data)
                 await asyncio.sleep(self.loop_delay)
 
+class PyAydioCapture(AudioCapture):
+    def __init__(
+            self, *, period: int = HOP_LENGTH, source: str = 'default',
+            loop_delay: float = .001, **kw):
+        super().__init__(**kw)
+        self.period, self.loop_delay = period, loop_delay
+        self.interface = pyaudio.PyAudio()
+
+    async def capture(self) -> None:
+        inp = self.interface.open(
+                format=pyaudio.paInt16, channels=1, rate=self.rate,
+                input=True)
+
+        while True:
+            # overflows when loading model, callback mode may be more reliable
+            self.write(inp.read(self.period, exception_on_overflow=False))
+            await asyncio.sleep(self.loop_delay)
+
+# there are simpler ways, but none that the MyPy is happy about
+class PlatformInheritance(type):
+    def __new__(cls, clsname, bases, attrs):
+        return super().__new__(cls, clsname, (
+                ALSACapture if linux else PyAydioCapture,), attrs)
+
+class LiveCapture(AudioCapture, metaclass=PlatformInheritance):
     async def read(self, length: Optional[float] = None) -> None:
         if length is None:
-            await self.busy_loop()
+            await self.capture()
         else:
             try:
-                await asyncio.wait_for(self.busy_loop(), length)
+                await asyncio.wait_for(self.capture(), length)
             except TimeoutError:
                 self.finished.set()
 
