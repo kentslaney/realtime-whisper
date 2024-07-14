@@ -67,10 +67,10 @@ class Transcriber(metaclass=PassthroughPropertyDefaults):
         self.dtype = torch.float16 if value else torch.float32
         self.fp16device()
 
-    @PassthroughProperty(None).setter
-    def model(self, value: "Whisper") -> None:
+    @PassthroughProperty[Optional["Whisper"]](None).setter
+    def model(self, value: Optional["Whisper"]) -> None:
         self._model = value
-        self.device = value.device
+        self.device = None if value is None else value.device
         self.input_stride = exact_div(
             N_FRAMES, self.model.dims.n_audio_ctx
         )  # mel frames per output token: 2
@@ -198,7 +198,7 @@ class Transcriber(metaclass=PassthroughPropertyDefaults):
     _tokenizer: Optional[Tokenizer] = None
     _tokenizer_cache: Dict[str, Tokenizer] = {}
     @property
-    def tokenizer(self) -> Optional[Tokenizer]:
+    def tokenizer(self) -> Tokenizer:
         if self._tokenizer is None:
             lang = self.language
             if self._language is not None:
@@ -212,8 +212,7 @@ class Transcriber(metaclass=PassthroughPropertyDefaults):
                         task=self.task,
                     )
                 return self._tokenizer
-            if lang is None:
-                return None
+            assert lang is not None
             if lang not in self._tokenizer_cache:
                 self._tokenizer_cache[lang] = self.get_tokenizer(
                     self.model.is_multilingual,
@@ -238,9 +237,8 @@ class Transcriber(metaclass=PassthroughPropertyDefaults):
                 if tokenizer not in self._initial_prompt_cache:
                     self._initial_prompt_cache[tokenizer] = tokenizer.encode(
                             " " + self.initial_prompt.strip())
-                if self._tokenizer is not None:
-                    self._initial_prompt_tokens = \
-                            self._initial_prompt_cache[tokenizer]
+                self._initial_prompt_tokens = \
+                        self._initial_prompt_cache[tokenizer]
                 return self._initial_prompt_cache[tokenizer]
         return self._initial_prompt_tokens
 
@@ -309,20 +307,19 @@ class Transcriber(metaclass=PassthroughPropertyDefaults):
                 needs_fallback = False  # silence
             if not needs_fallback:
                 break
+        assert decode_result is not None
         return decode_result
 
     def new_segment(
             self, *, start: float, end: float, tokens: torch.Tensor,
             result: DecodingResult) -> dict:
         _tokens = tokens.tolist()
-        _tokenizer = self.tokenizer
-        assert _tokenizer is not None
-        text_tokens = [token for token in _tokens if token < _tokenizer.eot]
+        text_tokens = [token for token in _tokens if token < self.tokenizer.eot]
         return {
             "seek": self.seek,
             "start": start,
             "end": end,
-            "text": _tokenizer.decode(text_tokens),
+            "text": self.tokenizer.decode(text_tokens),
             "tokens": _tokens,
             "temperature": result.temperature,
             "avg_logprob": result.avg_logprob,
@@ -361,8 +358,6 @@ class Transcriber(metaclass=PassthroughPropertyDefaults):
             self, current_segments: List[dict], segment_size: int,
             single_timestamp_ending: bool, tokens: torch.Tensor,
             timestamp_tokens: torch.Tensor, result: DecodingResult):
-        _tokenizer = self.tokenizer
-        assert _tokenizer is not None
         consecutive = torch.where(
                 timestamp_tokens[:-1] & timestamp_tokens[1:])[0]
         consecutive.add_(1)
@@ -377,10 +372,10 @@ class Transcriber(metaclass=PassthroughPropertyDefaults):
                 sliced_tokens = tokens[last_slice:current_slice]
                 start_timestamp_pos = (
                         sliced_tokens[0].item() -
-                        _tokenizer.timestamp_begin)
+                        self.tokenizer.timestamp_begin)
                 end_timestamp_pos = (
                         sliced_tokens[-1].item() -
-                        _tokenizer.timestamp_begin)
+                        self.tokenizer.timestamp_begin)
                 current_segments.append(
                     self.new_segment(
                         start=self.time_offset + \
@@ -402,17 +397,17 @@ class Transcriber(metaclass=PassthroughPropertyDefaults):
                 # timestamp
                 last_timestamp_pos = (
                         tokens[last_slice - 1].item() -
-                        _tokenizer.timestamp_begin)
+                        self.tokenizer.timestamp_begin)
                 self.seek += last_timestamp_pos * self.input_stride
         else:
             duration = segment_size * HOP_LENGTH / SAMPLE_RATE
             timestamps = tokens[timestamp_tokens.nonzero().flatten()]
             if len(timestamps) > 0 and \
-                    timestamps[-1].item() != _tokenizer.timestamp_begin:
+                    timestamps[-1].item() != self.tokenizer.timestamp_begin:
                 # no consecutive timestamps but it has a timestamp; use the last
                 # one.
                 last_timestamp_pos = \
-                        timestamps[-1].item() - _tokenizer.timestamp_begin
+                        timestamps[-1].item() - self.tokenizer.timestamp_begin
                 duration = last_timestamp_pos * self.time_precision
 
             current_segments.append(self.new_segment(
@@ -559,10 +554,8 @@ class Transcriber(metaclass=PassthroughPropertyDefaults):
             current_segments: List[dict] = []
 
             tokens = torch.tensor(result.tokens)
-            _tokenizer = self.tokenizer
-            assert _tokenizer is not None
             timestamp_tokens: torch.Tensor = tokens.ge(
-                    _tokenizer.timestamp_begin)
+                    self.tokenizer.timestamp_begin)
             single_timestamp_ending = (
                     timestamp_tokens[-2:].tolist() == [False, True])
 
@@ -610,11 +603,9 @@ class Transcriber(metaclass=PassthroughPropertyDefaults):
             if single_pass:
                 break
 
-        _tokenizer = self.tokenizer
-        assert _tokenizer is not None
         self.result = dict(
                 segments=self.all_segments, language=self.language,
-                text=_tokenizer.decode(
+                text=self.tokenizer.decode(
                     self.all_tokens[len(self.initial_prompt_tokens):]))
         self.latest = None
         return self.result

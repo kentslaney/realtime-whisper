@@ -14,7 +14,7 @@ class InMemoryAudio(AudioFile):
 def audio_tensor(audio: Union[str, np.ndarray, torch.Tensor]) -> torch.Tensor:
     if isinstance(audio, str):
         return InMemoryAudio(fname=audio).sequential()
-    if isinstance(audio, np.dtype):
+    if isinstance(audio, np.ndarray):
         return torch.from_numpy(audio)
     return audio
 
