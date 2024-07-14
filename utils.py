@@ -1,4 +1,4 @@
-import collections, torch, pathlib
+import torch, pathlib
 import numpy as np
 from collections.abc import Callable, AsyncIterable, AsyncIterator, Awaitable
 from typing import Any, Optional, Generic, TypeVar, Union, Tuple
@@ -76,7 +76,7 @@ class Unwrap(LoopbackIterator):
             self._initial, self.started = iterator.initial(), iterator.started
             self.iterator = iterator.iterator
             return
-        elif not isinstance(iterator, collections.abc.AsyncIterator):
+        elif not isinstance(iterator, AsyncIterator):
             iterator = aiter(iterator)
         try:
             self._initial = anext(iterator)
@@ -85,7 +85,7 @@ class Unwrap(LoopbackIterator):
             self.iterator, self.started = empty(), True
 
     async def initial(self) -> ArrayTypes:
-        while isinstance(self._initial, collections.abc.Awaitable):
+        while isinstance(self._initial, Awaitable):
             self._initial = await self._initial
         return self._initial
 
