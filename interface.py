@@ -1,4 +1,4 @@
-import asyncio, os, sys, time, json, torch
+import asyncio, os, sys, time, json
 from transcribe import Transcriber
 from utils import PassthroughProperty, PassthroughPropertyDefaults, PathType
 from audio import LiveCapture, AudioFileStitch, Recorder, ArrayStream, AudioFile
@@ -86,7 +86,6 @@ class ProgressTranscriber(MinimalTranscriber):
         import tqdm
         super().__init__(*a, **kw)
         self.duration, self.progress = duration, 0
-
 
     def __call__(self, *a, **kw) -> dict:
         if self._pbar is None:
