@@ -10,7 +10,7 @@ from whisper.audio import (
 )
 
 from utils import Batcher, PathType, ceildiv
-from typing import Optional, Union, IO, Tuple, Any, Type
+from typing import Optional, Union, IO, Tuple, Any
 from collections.abc import Coroutine, AsyncIterable, AsyncIterator, Awaitable
 
 class AudioSink:

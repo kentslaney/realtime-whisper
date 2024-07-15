@@ -512,7 +512,6 @@ class Transcriber(metaclass=PassthroughPropertyDefaults):
             single_pass: bool = False) -> dict:
         self.latest, self.frame_offset = mel, offset
         content_frames = mel.shape[-1] - N_FRAMES + offset
-        content_duration = float(content_frames * HOP_LENGTH / SAMPLE_RATE)
         while self.clip_idx < len(self.seek_clips):
             seek_clip_start, seek_clip_end = self.seek_clips[self.clip_idx]
             seek_clip_end = content_frames if seek_clip_end is None else \
