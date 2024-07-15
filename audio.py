@@ -348,7 +348,7 @@ class ALSACapture(AudioCapture):
         self.period, self.source = period, source
         self.loop_delay = loop_delay
 
-    async def busy_loop(self) -> None:
+    async def capture(self) -> None:
         inp = alsaaudio.PCM(
                 alsaaudio.PCM_CAPTURE, alsaaudio.PCM_NONBLOCK, channels=1,
                 rate=self.rate, format=alsaaudio.PCM_FORMAT_S16_LE,
@@ -357,8 +357,7 @@ class ALSACapture(AudioCapture):
         while True:
             l, data = inp.read()
             if l < 0:
-                raise Exception(
-                        "capture buffer overrun before write buffer")
+                raise Exception("capture buffer overrun before write buffer")
             if l:
                 self.write(data)
                 await asyncio.sleep(self.loop_delay)
