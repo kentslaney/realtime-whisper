@@ -67,6 +67,18 @@ class MockTokenizer:
     def encode(prompt):
         return [self.language, self, prompt]
 
+class OnDemand:
+    def __init__(self, size=None, seq=()):
+        self._seq, self.size = seq, size
+
+    def __getitem__(self, key):
+        res = self._seq[key] if key < len(self._seq) else None
+        breakpoint()
+        return res
+
+    def __len__(self):
+        return len(self._seq) if self.size is None else self.size
+
 class TranscriberTest(Transcriber):
     dtype = torch.float32
     model = type("MockModel", (), {
@@ -76,11 +88,11 @@ class TranscriberTest(Transcriber):
         })()
     _seek = 0
 
-    def __init__(self, seq):
-        super().__init__(self.model)
-        self.seq = seq
+    def __init__(self, seq=None):
+        super().__init__(self.model, initial_prompt="")
+        self.seq = OnDemand(CHUNK_LENGTH + 1) if seq is None else seq
         self.result = []
-        self.result.append(self.initial_prompt_tokens)
+        # self.result.append(self.initial_prompt_tokens)
         self.latest = []
         for i in range(len(self.seq)):
             self._seek = i
@@ -185,4 +197,3 @@ if __name__ == "__main__":
     transcriber = ReadableProgress(load_model("base.en"), verbose=False)
     asyncio.run(transcriber.progressive(AudioFile(fname=sys.argv[1])))
     print(transcriber)
-

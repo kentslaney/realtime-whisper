@@ -176,5 +176,5 @@ class EnTranscriber(ToDTranscriber):
 
 if __name__ == "__main__":
     from whisper import load_model
-    EnTranscriber(load_model("base.en")).stdout(3)
+    EnTranscriber(load_model("large")).stdout(5)
 
