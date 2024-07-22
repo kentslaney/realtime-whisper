@@ -1,6 +1,7 @@
 import asyncio, os, sys, time, json
 from transcribe import Transcriber
-from utils import PassthroughProperty, PassthroughPropertyDefaults, PathType
+from utils import (
+        PassthroughProperty, PassthroughPropertyDefaults, PathType, ceildiv)
 from audio import LiveCapture, AudioFileStitch, Recorder, ArrayStream, AudioFile
 from whisper.audio import CHUNK_LENGTH, FRAMES_PER_SECOND
 from typing import Generic, TypeVar, Callable, List, Union, Tuple, Optional
@@ -100,7 +101,7 @@ class ProgressTranscriber(MinimalTranscriber):
     def pbar(self):
         if self._pbar is None:
             n = self.latest.shape[-1] if self.duration is None \
-                    else -int(self.duration * -FRAMES_PER_SECOND)
+                    else ceildiv(self.duration * FRAMES_PER_SECOND, 1)
             self._pbar = tqdm.tqdm(
                     total=n, unit="frames", disable=self.verbose is not False)
             self._pbar.__enter__()
